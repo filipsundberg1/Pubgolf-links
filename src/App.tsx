@@ -4,7 +4,14 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
+import {
+  getRedirectResult,
+  onAuthStateChanged,
+  signInWithPopup,
+  signInWithRedirect,
+  signOut,
+  type User,
+} from 'firebase/auth';
 import {
   collection,
   deleteDoc,
@@ -33,6 +40,8 @@ import {
   db,
   googleProvider,
   handleFirestoreError,
+  reportFirestoreError,
+  isInAppBrowser,
   OperationType,
 } from './lib/firebase';
 import {
@@ -110,6 +119,23 @@ export default function App() {
   const [activeCelebrationClip, setActiveCelebrationClip] =
     useState<ScoreCelebrationClip | null>(null);
   const [gmpQuotaExceeded, setGmpQuotaExceeded] = useState<boolean>(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+
+  // Firestore listener errors are shown as a banner instead of crashing.
+  useEffect(() => {
+    const onSyncError = () =>
+      setSyncError('Kunde inte hämta senaste datan. Kontrollera uppkopplingen och ladda om sidan.');
+    window.addEventListener('firestore-sync-error', onSyncError);
+    return () => window.removeEventListener('firestore-sync-error', onSyncError);
+  }, []);
+
+  // Finish a redirect-based sign-in (fallback when popups are blocked).
+  useEffect(() => {
+    getRedirectResult(auth).catch((err) => {
+      console.error('Redirect sign-in failed', err);
+      setAuthNotice('Google-inloggningen kunde inte slutföras. Försök igen.');
+    });
+  }, []);
 
   // Listen for Google Maps Platform quota exceeded event (Section 8 Case A)
   useEffect(() => {
@@ -183,7 +209,7 @@ export default function App() {
       },
       (err) => {
         if (err && !String(err.message).includes('Missing or insufficient permissions')) {
-          handleFirestoreError(err, OperationType.GET, `profiles/${firebaseUser.uid}`);
+          reportFirestoreError(err, OperationType.GET, `profiles/${firebaseUser.uid}`);
         }
       }
     );
@@ -213,7 +239,7 @@ export default function App() {
       },
       (err) => {
         if (err && !String(err.message).includes('Missing or insufficient permissions')) {
-          handleFirestoreError(err, OperationType.LIST, 'profiles');
+          reportFirestoreError(err, OperationType.LIST, 'profiles');
         }
       }
     );
@@ -245,7 +271,7 @@ export default function App() {
         });
       },
       (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'courses');
+        reportFirestoreError(err, OperationType.LIST, 'courses');
       }
     );
 
@@ -307,7 +333,7 @@ export default function App() {
         },
         (err) => {
           if (err && !String(err.message).includes('Missing or insufficient permissions')) {
-            handleFirestoreError(err, OperationType.LIST, `courses/${cId}/holes`);
+            reportFirestoreError(err, OperationType.LIST, `courses/${cId}/holes`);
           }
         }
       );
@@ -410,7 +436,7 @@ export default function App() {
         },
         (err) => {
           if (err && !String(err.message).includes('Missing or insufficient permissions')) {
-            handleFirestoreError(err, OperationType.LIST, `courses/${cId}/participants`);
+            reportFirestoreError(err, OperationType.LIST, `courses/${cId}/participants`);
           }
         }
       );
@@ -426,11 +452,31 @@ export default function App() {
 
   const handleGoogleSignIn = async () => {
     setAuthNotice(null);
+    if (isInAppBrowser()) {
+      // Google blocks OAuth inside Messenger/Facebook/Instagram webviews.
+      setAuthNotice(
+        'Google-inloggning fungerar inte i Messenger/Facebook-webbläsaren. Tryck på ⋯ uppe till höger och välj "Öppna i Safari/Chrome" (eller kopiera länken) och logga in där.'
+      );
+      return;
+    }
     setIsSigningIn(true);
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (err) {
+      const code = (err as { code?: string })?.code || '';
       const msg = err instanceof Error ? err.message : String(err);
+      if (
+        code === 'auth/popup-blocked' ||
+        code === 'auth/operation-not-supported-in-this-environment' ||
+        code === 'auth/cancelled-popup-request'
+      ) {
+        try {
+          await signInWithRedirect(auth, googleProvider);
+          return;
+        } catch {
+          /* fall through to notice */
+        }
+      }
       if (!msg.includes('popup-closed-by-user')) {
         setAuthNotice(
           'Kunde inte slutföra Google-inloggningen. Kontrollera att popup-fönster är tillåtna i din webbläsare och försök igen.'
@@ -1319,6 +1365,19 @@ export default function App() {
       region="SE"
     >
       <div className="min-h-screen bg-[#F6F4EE] pb-24 text-[#112218] md:pb-12">
+        {syncError && (
+          <div className="sticky top-0 z-50 flex items-center justify-center gap-3 border-b border-red-200 bg-red-50 px-4 py-2.5 text-center text-xs text-red-900 shadow-sm md:text-sm">
+            <span>{syncError}</span>
+            <button
+              type="button"
+              onClick={() => setSyncError(null)}
+              className="rounded-full px-2 font-semibold hover:bg-red-100"
+              aria-label="Stäng"
+            >
+              ✕
+            </button>
+          </div>
+        )}
         {gmpQuotaExceeded && (
           <div className="bg-amber-50 border-b border-amber-200 text-amber-900 px-4 py-2.5 text-xs md:text-sm text-center sticky top-0 z-50 shadow-sm">
             <span>

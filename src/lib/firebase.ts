@@ -34,11 +34,11 @@ export interface FirestoreErrorInfo {
   };
 }
 
-export function handleFirestoreError(
+function buildErrorInfo(
   error: unknown,
   operationType: OperationType,
   path: string | null
-): never {
+): FirestoreErrorInfo {
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
@@ -56,8 +56,39 @@ export function handleFirestoreError(
     operationType,
     path,
   };
+  return errInfo;
+}
+
+/** Throws – use inside try/catch around writes so the caller can react. */
+export function handleFirestoreError(
+  error: unknown,
+  operationType: OperationType,
+  path: string | null
+): never {
+  const errInfo = buildErrorInfo(error, operationType, path);
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
+}
+
+/**
+ * Non-throwing variant for onSnapshot error callbacks. Throwing there only
+ * produces an uncaught error; instead we log and tell the UI via an event.
+ */
+export function reportFirestoreError(
+  error: unknown,
+  operationType: OperationType,
+  path: string | null
+): void {
+  const errInfo = buildErrorInfo(error, operationType, path);
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  window.dispatchEvent(new CustomEvent('firestore-sync-error', { detail: errInfo }));
+}
+
+/** Messenger, Facebook, Instagram etc. embed a webview where Google blocks sign-in. */
+export function isInAppBrowser(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  return /FBAN|FBAV|FB_IAB|FBIOS|Messenger|Instagram|Line\/|Snapchat|TikTok|musical_ly/i.test(ua);
 }
 
 async function testConnection() {
