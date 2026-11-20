@@ -63,8 +63,9 @@ service cloud.firestore {
       ]) &&
       data.keys().hasOnly([
         'courseId', 'appId', 'inviteCode', 'title', 'subtitle', 'city',
-        'eventDate', 'ownerId', 'ownerName', 'gameMode', 'updatedAt'
+        'eventDate', 'ownerId', 'ownerName', 'gameMode', 'isPublic', 'updatedAt'
       ]) &&
+      (!('isPublic' in data) || data.isPublic is bool) &&
       data.courseId is string && data.courseId.size() >= 1 && data.courseId.size() <= 128 &&
       data.courseId == courseId &&
       data.appId is string && data.appId.size() >= 1 && data.appId.size() <= 64 &&
@@ -211,7 +212,7 @@ service cloud.firestore {
         incoming().appId == existing().appId &&
         incoming().inviteCode == existing().inviteCode &&
         incoming().diff(existing()).affectedKeys().hasOnly([
-          'title', 'subtitle', 'city', 'eventDate', 'ownerName', 'gameMode', 'updatedAt'
+          'title', 'subtitle', 'city', 'eventDate', 'ownerName', 'gameMode', 'isPublic', 'updatedAt'
         ]);
 
       allow delete: if isVerifiedUser() &&

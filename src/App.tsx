@@ -69,8 +69,16 @@ import { PgaPlayersView } from './components/PgaPlayersView';
 import { GolferAvatar } from './components/GolferAvatar';
 import { BowlingScoreAnimationOverlay } from './components/BowlingScoreAnimationOverlay';
 import { APIProvider } from '@vis.gl/react-google-maps';
+import { AppHeader } from './components/shell/AppHeader';
+import { HomeView } from './components/views/HomeView';
+import { CreateRoundView, type CreateRoundInput } from './components/views/CreateRoundView';
+import { PlayView } from './components/views/PlayView';
+import { RoundView } from './components/views/RoundView';
+import { MyProfileView, withProfileDefaults } from './components/views/MyProfileView';
+import { AboutView } from './components/views/AboutView';
 
 type ActiveTab = 'lobby' | 'scorecard' | 'guide' | 'leaderboard' | 'players';
+type View = 'home' | 'create' | 'play' | 'round' | 'profile' | 'players' | 'about';
 
 export default function App() {
   // Clean up any legacy unauthenticated localStorage keys
@@ -99,6 +107,11 @@ export default function App() {
   })();
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('lobby');
+  const [view, setViewState] = useState<View>(initialJoinParam ? 'play' : 'home');
+  const setView = (next: View) => {
+    setViewState(next);
+    window.scrollTo({ top: 0 });
+  };
   const [selectedHoleNum, setSelectedHoleNum] = useState<number>(1);
 
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
@@ -205,6 +218,24 @@ export default function App() {
           });
         } else {
           setMyProfile(null);
+          // Första inloggningen: skapa en spelarprofil med namnet från Google
+          if (!snap.metadata.fromCache) {
+            const googleName = (firebaseUser.displayName || '').trim();
+            void setDoc(myProfileRef, {
+              uid: firebaseUser.uid,
+              appId: APP_ID,
+              displayName: (googleName.length >= 2 ? googleName : 'Spelare').slice(0, 60),
+              nickname: 'Rookie',
+              country: 'Stockholm',
+              homePub: 'Klubbhuset',
+              signatureDrink: 'Lager',
+              favoriteClub: 'Driver',
+              handicap: '0.0',
+              bio: 'Ny på touren.',
+              avatarSeed: 'emerald',
+              updatedAt: serverTimestamp(),
+            }).catch((err) => console.error('Kunde inte skapa profil', err));
+          }
         }
       },
       (err) => {
@@ -262,12 +293,13 @@ export default function App() {
             ownerId: String(d.ownerId),
             ownerName: String(d.ownerName),
             gameMode: d.gameMode === 'brutal' ? 'brutal' : 'single',
+            isPublic: d.isPublic === true,
           });
         });
         setCourses(loadedCourses);
         setActiveCourseId((prev) => {
           if (prev && loadedCourses.some((c) => c.courseId === prev)) return prev;
-          return loadedCourses[0]?.courseId || null;
+          return null;
         });
       },
       (err) => {
@@ -509,159 +541,36 @@ export default function App() {
   // 2. STRICT AUTH WALL (Inloggningsvägg): Nothing can be created or viewed until signed in with Google
   if (!firebaseUser) {
     return (
-      <div
-        data-testid="auth-wall-screen"
-        className="flex min-h-screen flex-col justify-between bg-[#F6F4EE] text-[#112218]"
-      >
-        {/* Minimal Top Header */}
-        <header className="flex items-center justify-between gap-8 border-b border-[#112218]/15 bg-[#F6F4EE]/95 px-6 py-4">
-          <span className="font-display text-xl font-bold tracking-tight text-[#112218] whitespace-nowrap shrink-0">
-            Pubgolf Links
-          </span>
-          <span className="hidden sm:inline text-xs font-medium text-[#112218]/65">
-            Officiellt Scorekort, Banguide & PGA Tour-profiler
-          </span>
+      <div data-testid="auth-wall-screen" className="relative flex min-h-screen flex-col overflow-hidden bg-[#112218] text-[#F6F4EE]">
+        <img src={HERO_CLUBHOUSE_IMG} alt="" className="absolute inset-0 h-full w-full object-cover opacity-25" />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#112218]/40 via-[#112218]/80 to-[#112218]" />
+        <main className="relative mx-auto flex w-full max-w-md flex-1 flex-col justify-end px-6 pb-14 pt-24 sm:justify-center">
+          <div className="flex h-14 w-14 items-center justify-center rounded-full border-2 border-[#D4AF37] text-2xl">⛳</div>
+          <p className="mt-6 text-xs font-semibold uppercase tracking-[0.3em] text-[#D4AF37]">Pubgolf Tour</p>
+          <h1 className="mt-2 font-display text-5xl font-bold leading-[1.05]">Pubgolf Links</h1>
+          <p className="mt-3 text-base text-[#F6F4EE]/70">
+            Skapa rundor, bjud in gänget och följ scoren hål för hål.
+          </p>
+
+          {authNotice && (
+            <div className="mt-6 rounded-2xl border border-[#D4AF37]/40 bg-[#D4AF37]/10 px-4 py-3 text-sm text-[#F6F4EE]">
+              {authNotice}
+            </div>
+          )}
+
           <button
             type="button"
-            disabled={isSigningIn}
             onClick={handleGoogleSignIn}
-            className="inline-flex min-h-[40px] items-center gap-2 rounded-lg bg-[#112218] px-4 py-2 text-xs font-semibold text-[#F6F4EE] transition-colors hover:bg-[#163826] disabled:opacity-50 whitespace-nowrap shrink-0"
+            disabled={isSigningIn}
+            className="mt-8 flex w-full items-center justify-center gap-3 rounded-2xl bg-[#F6F4EE] py-4 text-base font-bold text-[#112218] shadow-xl transition hover:bg-white disabled:opacity-60"
           >
-            <LogIn className="h-3.5 w-3.5 text-[#D4AF37]" />
-            Logga in med Google
+            <LogIn className="h-5 w-5 text-[#166534]" />
+            {isSigningIn ? 'Öppnar Google…' : 'Logga in med Google'}
           </button>
-        </header>
-
-        {/* Centered Clubhouse Login Gate */}
-        <main className="mx-auto flex w-full max-w-6xl flex-1 items-center px-4 py-10 sm:px-6 lg:px-8">
-          <div className="w-full overflow-hidden rounded-3xl border border-[#112218]/15 bg-[#112218] text-[#F6F4EE] shadow-xl">
-            <div className="grid grid-cols-1 items-stretch lg:grid-cols-12">
-              {/* Left 7 Cols: Auth Wall Callout & Google Sign-In CTA */}
-              <div className="flex flex-col justify-between p-8 sm:p-12 lg:col-span-7">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-[#D4AF37]">
-                    <ShieldCheck className="h-4 w-4" />
-                    <span>ENDAST FÖR INLOGGADE SPELARE</span>
-                    <span aria-hidden="true">·</span>
-                    <span>PGA PUBGOLF TOUR</span>
-                  </div>
-
-                  <h1
-                    className="mt-3 font-display text-3xl font-bold tracking-tight text-white sm:text-5xl"
-                    style={{ textWrap: 'balance' }}
-                  >
-                    Välkommen till Klubbhuset — Logga in för att Spela
-                  </h1>
-
-                  <p className="mt-4 max-w-xl text-sm leading-relaxed text-[#F6F4EE]/80 sm:text-base">
-                    För att skapa din PGA Tour-spelarprofil, arrangera en pubgolfrunda, bjuda in
-                    vänner eller se scorekort, banguide och andras spelarprofiler behöver du logga in
-                    med ditt Google-konto.
-                  </p>
-
-                  {initialJoinParam && (
-                    <div className="mt-5 rounded-xl border border-[#D4AF37]/40 bg-[#D4AF37]/15 p-4 text-xs text-white">
-                      <span className="font-bold text-[#D4AF37]">Inbjudan upptäckt:</span> Du har
-                      öppnat en inbjudan till runda{' '}
-                      <strong className="font-mono-tabular">{initialJoinParam}</strong>. Logga in med
-                      Google nedan för att gå med direkt!
-                    </div>
-                  )}
-
-                  {authNotice && (
-                    <div
-                      role="alert"
-                      className="mt-5 rounded-xl border border-[#FCA5A5]/40 bg-[#991B1B]/40 px-4 py-3 text-xs font-medium text-white"
-                    >
-                      {authNotice}
-                    </div>
-                  )}
-
-                  {/* Features locked behind login */}
-                  <div className="mt-8 grid grid-cols-1 gap-3 border-t border-white/10 pt-6 text-xs text-[#F6F4EE]/80 sm:grid-cols-2">
-                    <div className="flex items-start gap-2.5">
-                      <Award className="mt-0.5 h-4 w-4 shrink-0 text-[#D4AF37]" />
-                      <span>
-                        <strong className="block text-white">Personligt PGA Tour-kort</strong>
-                        Skapa din profil och läs om övriga startfältet.
-                      </span>
-                    </div>
-                    <div className="flex items-start gap-2.5">
-                      <Compass className="mt-0.5 h-4 w-4 shrink-0 text-[#D4AF37]" />
-                      <span>
-                        <strong className="block text-white">Visuell Banguide & Banarkitekt</strong>
-                        Designa egna 9-hålsrundor med pub, dryck och par.
-                      </span>
-                    </div>
-                    <div className="flex items-start gap-2.5">
-                      <ClipboardList className="mt-0.5 h-4 w-4 shrink-0 text-[#D4AF37]" />
-                      <span>
-                        <strong className="block text-white">Digitalt Golf-Scorekort</strong>
-                        Registrera klunkar för Birdie, Eagle, Par & Albatross.
-                      </span>
-                    </div>
-                    <div className="flex items-start gap-2.5">
-                      <Trophy className="mt-0.5 h-4 w-4 shrink-0 text-[#D4AF37]" />
-                      <span>
-                        <strong className="block text-white">Delbara Rundor & Live-Tabell</strong>
-                        Bjud in vänner med kod och tävla i realtid.
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-8 pt-2">
-                  <button
-                    type="button"
-                    disabled={isSigningIn}
-                    onClick={handleGoogleSignIn}
-                    className="inline-flex min-h-[50px] w-full items-center justify-center gap-3 rounded-xl bg-[#D4AF37] px-6 py-3.5 text-sm font-bold text-[#112218] shadow-lg transition-all hover:bg-[#E5C158] sm:w-auto"
-                  >
-                    <LogIn className="h-5 w-5" />
-                    {isSigningIn ? 'Öppnar Google-inloggning...' : 'Logga in med Google för att börja'}
-                  </button>
-                </div>
-              </div>
-
-              {/* Right 5 Cols: Clubhouse Photography & Claret Jug */}
-              <div className="relative min-h-[280px] bg-[#0B1E14] lg:col-span-5">
-                <img
-                  src={HERO_CLUBHOUSE_IMG}
-                  alt="Pubgolf Links Clubhouse"
-                  referrerPolicy="no-referrer"
-                  className="h-full w-full object-cover opacity-85"
-                  onError={(e) => {
-                    e.currentTarget.style.display = 'none';
-                  }}
-                />
-                <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#112218] via-[#112218]/30 to-transparent lg:bg-gradient-to-r" />
-                <div className="absolute bottom-6 left-6 right-6 flex items-center gap-4 rounded-2xl border border-white/15 bg-[#112218]/90 p-4 backdrop-blur-md">
-                  <img
-                    src={TROPHY_CLARET_IMG}
-                    alt="Claret Jug Trophy"
-                    referrerPolicy="no-referrer"
-                    className="h-14 w-14 shrink-0 rounded-xl object-cover ring-1 ring-[#D4AF37]/40"
-                    onError={(e) => {
-                      e.currentTarget.style.display = 'none';
-                    }}
-                  />
-                  <div className="text-xs">
-                    <div className="font-mono-tabular font-bold text-[#D4AF37]">
-                      PUBGOLF LINKS TOUR
-                    </div>
-                    <div className="mt-0.5 text-white/85">
-                      Privat tävlingsplattform. Logga in för att se rundor, profiler och scorekort.
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+          <p className="mt-3 text-center text-xs text-[#F6F4EE]/55">
+            Första gången? Då skapas ditt konto automatiskt.
+          </p>
         </main>
-
-        <footer className="mx-auto w-full max-w-7xl border-t border-[#112218]/10 px-6 py-6 text-center text-xs text-[#112218]/60">
-          Pubgolf Links Championship · Inloggning krävs för åtkomst till profiler, banor och scorekort
-        </footer>
       </div>
     );
   }
@@ -863,14 +772,7 @@ export default function App() {
     }
   };
 
-  const handleCreateCourse = async (input: {
-    title: string;
-    subtitle: string;
-    city: string;
-    eventDate: string;
-    gameMode: PubGolfGameMode;
-    initialHoles?: InitialHoleDraft[];
-  }): Promise<PubCourse> => {
+  const handleCreateCourse = async (input: CreateRoundInput): Promise<PubCourse> => {
     const uid = firebaseUser.uid;
     const ownerName = myProfile?.displayName || firebaseUser.displayName || 'Banarkitekt';
     const courseId = `round-${Date.now()}`;
@@ -888,25 +790,26 @@ export default function App() {
       ownerId: uid,
       ownerName,
       gameMode,
+      isPublic: input.isPublic,
     };
 
+    const text = (v: string, fallback: string, max: number) =>
+      v.trim().length >= 2 ? v.trim().slice(0, max) : fallback;
     const blankHoles = createBlankHolesForCourse(courseId, uid).map((hole) => {
-      const draft = input.initialHoles?.find((d) => d.holeNumber === hole.holeNumber);
+      const draft = input.holes.find((d) => d.holeNumber === hole.holeNumber);
       if (!draft) return hole;
-      const customPubName = draft.pubName.trim();
-      const customPubAddress = draft.pubAddress.trim();
-      const customDrinkName = draft.drinkName.trim();
-      const customPar =
-        Number.isInteger(draft.par) && draft.par >= 1 && draft.par <= 10 ? draft.par : hole.par;
+      const hasRule = draft.hazardTitle.trim().length >= 2 || draft.hazardRule.trim().length >= 2;
       return {
         ...hole,
-        pubName:
-          customPubName.length >= 2 ? customPubName.slice(0, 80) : hole.pubName,
-        pubAddress:
-          customPubAddress.length >= 2 ? customPubAddress.slice(0, 120) : hole.pubAddress,
-        drinkName:
-          customDrinkName.length >= 2 ? customDrinkName.slice(0, 80) : hole.drinkName,
-        par: customPar,
+        pubName: text(draft.pubName, `Hål ${hole.holeNumber}`, 80),
+        pubAddress: text(draft.pubAddress, hole.pubAddress, 120),
+        drinkType: draft.drinkType,
+        drinkName: text(draft.drinkName, hole.drinkName, 80),
+        volumeCl: Math.max(2, Math.min(100, Math.round(draft.volumeCl) || 40)),
+        par: Math.max(1, Math.min(5, Math.round(draft.par) || 3)),
+        hazardTitle: hasRule ? text(draft.hazardTitle, 'Hålets regel', 80) : hole.hazardTitle,
+        hazardRule: hasRule ? text(draft.hazardRule, draft.hazardTitle.trim() || 'Se rubriken.', 180) : hole.hazardRule,
+        caddieTip: 'Lycka till – och drick vatten mellan hålen!',
       };
     });
     const initialParticipant: PlayerTourProfile = {
@@ -951,6 +854,7 @@ export default function App() {
         ownerId: uid,
         ownerName: newCourse.ownerName.slice(0, 80),
         gameMode,
+        isPublic: input.isPublic,
         updatedAt: serverTimestamp(),
       });
 
@@ -973,7 +877,7 @@ export default function App() {
 
   const handleJoinByCode = async (
     codeOrId: string
-  ): Promise<{ ok: boolean; message: string }> => {
+  ): Promise<{ ok: boolean; message: string; courseId?: string }> => {
     const normalized = codeOrId.trim().toUpperCase();
     let matchedCourse =
       courses.find(
@@ -1001,6 +905,7 @@ export default function App() {
             ownerId: String(d.ownerId),
             ownerName: String(d.ownerName),
             gameMode: d.gameMode === 'brutal' ? 'brutal' : 'single',
+            isPublic: d.isPublic === true,
           };
         }
       } catch (error) {
@@ -1051,7 +956,8 @@ export default function App() {
 
     return {
       ok: true,
-      message: `Du är nu ansluten till "${matchedCourse.title}"! Öppna Scorekortet eller Banguiden för att börja.`,
+      courseId: cId,
+      message: `Du är nu ansluten till "${matchedCourse.title}"!`,
     };
   };
 
@@ -1220,6 +1126,7 @@ export default function App() {
         ownerId: firebaseUser.uid,
         ownerName: normalizedCourse.ownerName.slice(0, 80),
         gameMode,
+        isPublic: !!normalizedCourse.isPublic,
         updatedAt: serverTimestamp(),
       });
     } catch (error) {
@@ -1358,341 +1265,175 @@ export default function App() {
     </div>
   );
 
+  const myProfileFields = withProfileDefaults({
+    displayName: myProfile?.displayName || firebaseUser.displayName || 'Spelare',
+    nickname: myProfile?.nickname || '',
+    country: myProfile?.country || '',
+    homePub: myProfile?.homePub || '',
+    signatureDrink: myProfile?.signatureDrink || '',
+    favoriteClub: myProfile?.favoriteClub || '',
+    handicap: myComputedHandicap,
+    bio: myProfile?.bio || '',
+    avatarSeed: myProfile?.avatarSeed || 'emerald',
+  });
+
+  const isMember = (cId: string) => (participantsByCourse[cId] || []).some((p) => p.uid === currentUid);
+  const sortByDate = (a: PubCourse, b: PubCourse) => b.eventDate.localeCompare(a.eventDate);
+  const myRounds = courses.filter((c) => isMember(c.courseId) || c.ownerId === currentUid).sort(sortByDate);
+  const publicRounds = courses
+    .filter((c) => c.isPublic && !isMember(c.courseId) && c.ownerId !== currentUid)
+    .sort(sortByDate);
+  const playerCountByCourse: Record<string, number> = {};
+  for (const c of courses) playerCountByCourse[c.courseId] = (participantsByCourse[c.courseId] || []).length;
+
+  const openRound = (cId: string) => {
+    setActiveCourseId(cId);
+    const me = (participantsByCourse[cId] || []).find((p) => p.uid === currentUid);
+    const firstOpen = me ? me.sips.findIndex((s) => !s) : 0;
+    setSelectedHoleNum(firstOpen >= 0 ? firstOpen + 1 : 1);
+    setView('round');
+  };
+
+  const createAndOpen = async (input: CreateRoundInput) => {
+    const created = await handleCreateCourse(input);
+    setActiveCourseId(created.courseId);
+    setSelectedHoleNum(1);
+    setView('round');
+  };
+
+  const firstName = (myProfileFields.displayName || 'golfare').split(' ')[0];
+
   return (
     <APIProvider
       apiKey={import.meta.env.VITE_GOOGLE_MAPS_API_KEY || ''}
       language="sv"
       region="SE"
     >
-      <div className="min-h-screen bg-[#F6F4EE] pb-24 text-[#112218] md:pb-12">
+      <div className="min-h-screen bg-[#F6F4EE] text-[#112218]">
         {syncError && (
           <div className="sticky top-0 z-50 flex items-center justify-center gap-3 border-b border-red-200 bg-red-50 px-4 py-2.5 text-center text-xs text-red-900 shadow-sm md:text-sm">
             <span>{syncError}</span>
-            <button
-              type="button"
-              onClick={() => setSyncError(null)}
-              className="rounded-full px-2 font-semibold hover:bg-red-100"
-              aria-label="Stäng"
-            >
+            <button type="button" onClick={() => setSyncError(null)} className="rounded-full px-2 font-semibold hover:bg-red-100" aria-label="Stäng">
               ✕
             </button>
           </div>
         )}
         {gmpQuotaExceeded && (
-          <div className="bg-amber-50 border-b border-amber-200 text-amber-900 px-4 py-2.5 text-xs md:text-sm text-center sticky top-0 z-50 shadow-sm">
-            <span>
-              Google Maps Platform quota reached. If you are the app owner, visit{' '}
-              <a
-                href="https://developers.google.com/maps/ai/ai-studio?utm_campaign=gmp_mcp_codeassist_v1_aistudio#quota_exceeded_errors"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline font-semibold text-amber-950 hover:text-amber-800"
-              >
-                maps developer site
-              </a>{' '}
-              for instructions to update your account.
-            </span>
+          <div className="border-b border-amber-200 bg-amber-50 px-4 py-2.5 text-center text-xs text-amber-900">
+            Kartans gratiskvot är slut för idag – kartan kan saknas en stund.
           </div>
         )}
 
-        {/* Strict 3-Zone Top Bar Contract */}
-        <header className="sticky top-0 z-30 flex items-center justify-between gap-3 sm:gap-8 border-b border-[#112218]/15 bg-[#F6F4EE]/95 px-4 sm:px-6 py-3 sm:py-4 backdrop-blur-md">
-        {/* Zone 1: Single text element wordmark */}
-        <a
-          href="#top"
-          onClick={(e) => {
-            e.preventDefault();
-            setActiveTab('lobby');
+        <AppHeader
+          displayName={myProfileFields.displayName}
+          avatarSeed={myProfileFields.avatarSeed}
+          handicap={myComputedHandicap}
+          onGoHome={() => setView('home')}
+          onOpenMyProfile={() => setView('profile')}
+          onOpenPlayers={() => {
+            setSelectedPlayerUid(currentUid);
+            setView('players');
           }}
-          className="font-display text-lg sm:text-xl font-bold tracking-tight text-[#112218] whitespace-nowrap shrink-0"
-        >
-          Pubgolf Links
-        </a>
+          onOpenAbout={() => setView('about')}
+          onSignOut={handleGoogleSignOut}
+        />
 
-        {/* Zone 2: 5 concise single-line text navigation links */}
-        <nav
-          aria-label="Huvudmeny"
-          className="hidden md:flex items-center gap-7 text-sm font-medium text-[#112218]/75"
-        >
-          <button
-            type="button"
-            onClick={() => setActiveTab('lobby')}
-            className={`transition-colors hover:text-[#112218] whitespace-nowrap shrink-0 ${
-              activeTab === 'lobby'
-                ? 'font-semibold text-[#112218] underline decoration-[#166534] decoration-2 underline-offset-8'
-                : ''
-            }`}
-          >
-            Rundor & Inbjudan
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('scorecard')}
-            className={`transition-colors hover:text-[#112218] whitespace-nowrap shrink-0 ${
-              activeTab === 'scorecard'
-                ? 'font-semibold text-[#112218] underline decoration-[#166534] decoration-2 underline-offset-8'
-                : ''
-            }`}
-          >
-            Scorekort
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('guide')}
-            className={`transition-colors hover:text-[#112218] whitespace-nowrap shrink-0 ${
-              activeTab === 'guide'
-                ? 'font-semibold text-[#112218] underline decoration-[#166534] decoration-2 underline-offset-8'
-                : ''
-            }`}
-          >
-            Banguide
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('leaderboard')}
-            className={`transition-colors hover:text-[#112218] whitespace-nowrap shrink-0 ${
-              activeTab === 'leaderboard'
-                ? 'font-semibold text-[#112218] underline decoration-[#166534] decoration-2 underline-offset-8'
-                : ''
-            }`}
-          >
-            Leaderboard
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('players')}
-            className={`transition-colors hover:text-[#112218] whitespace-nowrap shrink-0 ${
-              activeTab === 'players'
-                ? 'font-semibold text-[#112218] underline decoration-[#166534] decoration-2 underline-offset-8'
-                : ''
-            }`}
-          >
-            PGA Profiler
-          </button>
-        </nav>
+        <BowlingScoreAnimationOverlay
+          clip={activeCelebrationClip}
+          onDismiss={() => setActiveCelebrationClip(null)}
+        />
 
-        {/* Zone 3: Player Avatar + Sign Out */}
-        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-          {activePlayerInRound && (
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedPlayerUid(currentUid);
-                setActiveTab('players');
-              }}
-              className="inline-flex items-center gap-2 rounded-full border border-[#112218]/15 bg-white p-1 sm:pl-1 sm:pr-3 sm:py-1 text-xs font-semibold text-[#112218] hover:bg-[#112218]/5 transition cursor-pointer"
-              title="Visa mitt PGA-spelarkort"
-            >
-              <GolferAvatar
-                avatarSeed={activePlayerInRound.avatarSeed}
-                displayName={activePlayerInRound.displayName}
-                size="xs"
-              />
-              <span className="hidden sm:inline max-w-[120px] truncate">
-                {activePlayerInRound.displayName}
-              </span>
-            </button>
+        <main id="top" className={`mx-auto px-4 pt-5 pb-10 ${view === 'players' ? 'max-w-6xl' : 'max-w-3xl'}`}>
+          {view === 'home' && (
+            <HomeView
+              firstName={firstName}
+              myOpenRounds={myRounds}
+              onCreate={() => setView('create')}
+              onPlay={() => setView('play')}
+              onOpenRound={openRound}
+            />
           )}
-          <button
-            type="button"
-            onClick={handleGoogleSignOut}
-            className="inline-flex min-h-[38px] sm:min-h-[40px] items-center gap-1.5 sm:gap-2 rounded-lg bg-[#112218] px-3 sm:px-4 py-1.5 sm:py-2 text-xs font-semibold text-[#F6F4EE] transition-colors hover:bg-[#163826] whitespace-nowrap shrink-0"
-          >
-            <LogOut className="h-3.5 w-3.5 text-[#D4AF37]" />
-            <span>Logga ut</span>
-          </button>
-        </div>
-      </header>
 
-      {/* Bowling-Alley Style Live Score Celebration / Roast Overlay */}
-      <BowlingScoreAnimationOverlay
-        clip={activeCelebrationClip}
-        onDismiss={() => setActiveCelebrationClip(null)}
-      />
+          {view === 'create' && (
+            <CreateRoundView
+              defaultCity={myProfile?.country && myProfile.country !== 'Sverige' ? myProfile.country : 'Stockholm'}
+              onBack={() => setView('home')}
+              onCreate={createAndOpen}
+            />
+          )}
 
-      {/* Main Content Container */}
-      <main id="top" className="mx-auto max-w-7xl px-4 pt-6 sm:px-6 lg:px-8">
-        {activeTab === 'lobby' && (
-          <RoundsLobbyView
-            isGoogleSignedIn={true}
-            onGoogleSignIn={handleGoogleSignIn}
-            myProfile={myProfile}
-            myComputedHandicap={myComputedHandicap}
-            myRoundsPlayed={myRoundsPlayed}
-            onSaveMyProfile={handleSaveMyProfile}
-            courses={courses}
-            activeCourse={activeCourse}
-            onSelectCourse={(cId) => setActiveCourseId(cId)}
-            onCreateCourse={handleCreateCourse}
-            onJoinByCode={handleJoinByCode}
-            onDeleteCourse={handleDeleteCourse}
-            onGoToScorecard={() => setActiveTab('scorecard')}
-            onGoToGuide={() => setActiveTab('guide')}
-            initialJoinCode={initialJoinParam}
-          />
-        )}
+          {view === 'play' && (
+            <PlayView
+              myRounds={myRounds}
+              publicRounds={publicRounds}
+              playerCountByCourse={playerCountByCourse}
+              currentUid={currentUid}
+              initialCode={initialJoinParam}
+              onBack={() => setView('home')}
+              onOpenRound={openRound}
+              onJoin={handleJoinByCode}
+            />
+          )}
 
-        {activeTab === 'scorecard' && (
-          <>
-            {renderRoundSwitcherBar()}
-            {activeCourse && activePlayerInRound ? (
-              <ScorecardView
+          {view === 'round' &&
+            (activeCourse && activePlayerInRound ? (
+              <RoundView
                 course={activeCourse}
                 holes={activeHoles}
-                activePlayer={activePlayerInRound}
-                allPlayers={activeParticipants}
+                me={activePlayerInRound}
+                players={activeParticipants}
+                isOwner={activeCourse.ownerId === currentUid}
                 selectedHoleNum={selectedHoleNum}
-                onSelectHole={(num) => setSelectedHoleNum(num)}
+                onSelectHole={setSelectedHoleNum}
+                onBack={() => setView('play')}
                 onUpdateHoleSips={handleUpdateHoleSips}
-                onReplayHoleAnimation={(holeNum, sipsVal) =>
-                  triggerHoleCelebrationClip(activePlayerInRound, holeNum, sipsVal)
-                }
-                onOpenCourseGuide={(num) => {
-                  setSelectedHoleNum(num);
-                  setActiveTab('guide');
-                }}
-                onOpenLeaderboard={() => setActiveTab('leaderboard')}
-              />
-            ) : (
-              renderNoActiveRoundPrompt('Scorekortet')
-            )}
-          </>
-        )}
-
-        {activeTab === 'guide' && (
-          <>
-            {renderRoundSwitcherBar()}
-            {activeCourse && activePlayerInRound ? (
-              <CourseGuideView
-                course={activeCourse}
-                holes={activeHoles}
-                activePlayer={activePlayerInRound}
-                selectedHoleNum={selectedHoleNum}
-                onSelectHole={(num) => setSelectedHoleNum(num)}
                 onSaveHoleConfig={handleSaveHoleConfig}
                 onSaveCourseMeta={handleSaveCourseMeta}
-                onGoToScorecardHole={(num) => {
-                  setSelectedHoleNum(num);
-                  setActiveTab('scorecard');
-                }}
-              />
-            ) : (
-              renderNoActiveRoundPrompt('Banguiden')
-            )}
-          </>
-        )}
-
-        {activeTab === 'leaderboard' && (
-          <>
-            {renderRoundSwitcherBar()}
-            {activeCourse ? (
-              <LeaderboardView
-                course={activeCourse}
-                holes={activeHoles}
-                players={activeParticipants}
-                activePlayerUid={currentUid}
-                isCourseOwner={activeCourse.ownerId === currentUid}
-                onUpdateCourseGameMode={(newMode) =>
-                  handleSaveCourseMeta({ ...activeCourse, gameMode: newMode })
-                }
                 onAssignTeam={handleAssignBrutalBallTeam}
-                onInspectPlayerProfile={(uid) => {
+                onInspectPlayer={(uid) => {
                   setSelectedPlayerUid(uid);
-                  setActiveTab('players');
+                  setView('players');
                 }}
-                onGoToScorecard={() => setActiveTab('scorecard')}
               />
             ) : (
-              renderNoActiveRoundPrompt('Leaderboarden')
-            )}
-          </>
-        )}
+              <div className="rounded-3xl border border-[#112218]/10 bg-white p-8 text-center shadow-xs">
+                <p className="text-sm text-[#112218]/70">Rundan laddas eller finns inte längre.</p>
+                <button type="button" onClick={() => setView('play')} className="mt-4 rounded-full bg-[#112218] px-5 py-2 text-sm font-semibold text-[#F6F4EE]">
+                  Till Spela
+                </button>
+              </div>
+            ))}
 
-        {activeTab === 'players' && (
-          <PgaPlayersView
-            players={allTourPlayers}
-            careerStatsByUid={careerStatsByUid}
-            activePlayer={activePlayerInRound}
-            selectedPlayerUid={selectedPlayerUid}
-            onSelectPlayerUid={(uid) => setSelectedPlayerUid(uid)}
-            onSelectCourseFromHistory={(cId) => {
-              setActiveCourseId(cId);
-              setActiveTab('leaderboard');
-            }}
-            onSaveMyProfile={handleSaveMyProfile}
-          />
-        )}
-      </main>
+          {view === 'profile' && (
+            <MyProfileView
+              profile={myProfileFields}
+              stats={careerStatsByUid[currentUid]}
+              onBack={() => setView('home')}
+              onSave={handleSaveMyProfile}
+              onOpenRound={openRound}
+            />
+          )}
 
-      {/* Quiet Editorial Footer */}
-      <footer className="mx-auto mt-16 max-w-7xl border-t border-[#112218]/10 px-6 py-8 text-xs text-[#112218]/60">
-        <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
-          <span>Pubgolf Links Championship · Officiellt Digitalt Scorekort & Banguide</span>
-          <span>Skapa egna rundor · Bjud in med kod · Varje klunk räknas som ett slag</span>
-        </div>
-      </footer>
+          {view === 'players' && (
+            <div className="space-y-4">
+              <button type="button" onClick={() => setView('home')} className="text-sm font-semibold text-[#166534]">
+                ← Tillbaka
+              </button>
+              <PgaPlayersView
+                players={allTourPlayers}
+                careerStatsByUid={careerStatsByUid}
+                activePlayer={activePlayerInRound}
+                selectedPlayerUid={selectedPlayerUid}
+                onSelectPlayerUid={(uid) => setSelectedPlayerUid(uid)}
+                onSelectCourseFromHistory={(cId) => openRound(cId)}
+                onSaveMyProfile={handleSaveMyProfile}
+              />
+            </div>
+          )}
 
-      {/* Mobile Fixed Bottom Navigation Bar */}
-      <nav
-        aria-label="Mobilmeny"
-        className="fixed bottom-0 left-0 right-0 z-40 grid h-16 grid-cols-5 items-center border-t border-[#112218]/15 bg-[#F6F4EE]/95 px-1 backdrop-blur-md md:hidden"
-      >
-        <button
-          type="button"
-          onClick={() => setActiveTab('lobby')}
-          className={`flex min-h-[44px] flex-col items-center justify-center rounded-lg py-1 ${
-            activeTab === 'lobby' ? 'font-bold text-[#166534]' : 'text-[#112218]/65'
-          }`}
-        >
-          <Flag className="h-5 w-5" />
-          <span className="mt-0.5 text-[10px] tracking-tight">Rundor</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('scorecard')}
-          className={`flex min-h-[44px] flex-col items-center justify-center rounded-lg py-1 ${
-            activeTab === 'scorecard' ? 'font-bold text-[#166534]' : 'text-[#112218]/65'
-          }`}
-        >
-          <ClipboardList className="h-5 w-5" />
-          <span className="mt-0.5 text-[10px] tracking-tight">Scorekort</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('guide')}
-          className={`flex min-h-[44px] flex-col items-center justify-center rounded-lg py-1 ${
-            activeTab === 'guide' ? 'font-bold text-[#166534]' : 'text-[#112218]/65'
-          }`}
-        >
-          <Compass className="h-5 w-5" />
-          <span className="mt-0.5 text-[10px] tracking-tight">Banguide</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('leaderboard')}
-          className={`flex min-h-[44px] flex-col items-center justify-center rounded-lg py-1 ${
-            activeTab === 'leaderboard' ? 'font-bold text-[#166534]' : 'text-[#112218]/65'
-          }`}
-        >
-          <Trophy className="h-5 w-5" />
-          <span className="mt-0.5 text-[10px] tracking-tight">Tabell</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('players')}
-          className={`flex min-h-[44px] flex-col items-center justify-center rounded-lg py-1 ${
-            activeTab === 'players' ? 'font-bold text-[#166534]' : 'text-[#112218]/65'
-          }`}
-        >
-          <Users className="h-5 w-5" />
-          <span className="mt-0.5 text-[10px] tracking-tight">Spelare</span>
-        </button>
-      </nav>
-    </div>
+          {view === 'about' && <AboutView onBack={() => setView('home')} />}
+        </main>
+      </div>
     </APIProvider>
   );
 }

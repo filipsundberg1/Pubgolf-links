@@ -47,7 +47,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
   const singleLeader = singleLeaderboard[0];
   const brutalLeader = brutalLeaderboard[0];
 
-  // In Brutal Ball, the 2-player Team Leaderboard is the MAIN leaderboard, with an option to inspect individual scores
+  // In Lagspel, the 2-player Team Leaderboard is the MAIN leaderboard, with an option to inspect individual scores
   const [boardTab, setBoardTab] = useState<'teams' | 'individual'>(
     isBrutalBall ? 'teams' : 'individual'
   );
@@ -89,7 +89,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
 
     await onAssignTeam(uids, generatedTeamId, finalTeamName);
     setCustomTeamName('');
-    setTeamSaveStatus(`Laget "${finalTeamName}" har sparats i Brutal Ball-tabellen!`);
+    setTeamSaveStatus(`Laget "${finalTeamName}" har sparats i Lagspel-tabellen!`);
     setTimeout(() => setTeamSaveStatus(null), 3500);
   };
 
@@ -123,7 +123,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
                   ) : (
                     <>
                       <User className="h-3 w-3" />
-                      SINGLE BALL · INDIVIDUELL
+                      SLAGSPEL · INDIVIDUELLT
                     </>
                   )}
                 </span>
@@ -131,12 +131,12 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
 
               <h2 className="mt-1.5 font-display text-2xl font-bold tracking-tight text-[#F6F4EE] sm:text-4xl">
                 {isBrutalBall
-                  ? 'Brutal Ball Mästerskapstabell — Pubgolf Links'
+                  ? 'Lagspel Mästerskapstabell — Pubgolf Links'
                   : 'Mästerskapstabell — Pubgolf Links'}
               </h2>
               <p className="mt-1.5 max-w-2xl text-xs sm:text-sm text-[#F6F4EE]/80">
                 {isBrutalBall
-                  ? `I Brutal Ball spelar ni i lag om 2 och 2 där lagets score är bådas singelscore ihoplagt. Lägst sammanlagt resultat i förhållande till par tar hem Claret Jug-trofén.`
+                  ? `I Lagspel spelar ni i lag om 2 och 2 där lagets score är bådas singelscore ihoplagt. Lägst sammanlagt resultat i förhållande till par tar hem Claret Jug-trofén.`
                   : `Uppdateras direkt efter varje registrerat pubhål. Lägst resultat i förhållande till banans par (Par ${orderedHoles.reduce(
                       (acc, h) => acc + h.par,
                       0
@@ -160,7 +160,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
                     }`}
                   >
                     <User className="h-3.5 w-3.5" />
-                    Single Ball
+                    Slagspel
                   </button>
                   <button
                     type="button"
@@ -173,13 +173,13 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
                     }`}
                   >
                     <Users className="h-3.5 w-3.5" />
-                    Brutal Ball (Lag 2 & 2)
+                    Lagspel (lag om 2)
                   </button>
                 </div>
               )}
             </div>
 
-            {/* Leader Callout Box: Shows Leading 2-Player Team in Brutal Ball, or Leading Single Player in Single Ball */}
+            {/* Leader Callout Box: Shows Leading 2-Player Team in Lagspel, or Leading Single Player in Slagspel */}
             {isBrutalBall && brutalLeader ? (
               <div className="mt-4 sm:mt-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 rounded-xl border border-[#D4AF37]/30 bg-white/5 p-3.5 sm:p-4">
                 <div className="flex items-center gap-3 min-w-0">
@@ -303,9 +303,9 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
             <h3 className="font-display text-lg sm:text-xl font-bold text-[#112218]">
               {isBrutalBall
                 ? boardTab === 'teams'
-                  ? 'Huvudtabell: Brutal Ball Lag-Leaderboard (2 & 2)'
+                  ? 'Huvudtabell: Lagspel Lag-Leaderboard (2 & 2)'
                   : 'Individuell Leaderboard — Singelscore i rundan'
-                : 'Ställning & Hål-för-hål Resultat (Single Ball)'}
+                : 'Ställning & Hål-för-hål Resultat (Slagspel)'}
             </h3>
             <p className="text-xs text-[#112218]/65">
               {isBrutalBall
@@ -333,12 +333,12 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
               className="inline-flex min-h-[40px] items-center justify-center gap-2 rounded-xl bg-[#112218] px-4 py-2 text-xs font-semibold text-[#F6F4EE] transition-colors hover:bg-[#163826] whitespace-nowrap shrink-0 cursor-pointer"
             >
               <Flag className="h-4 w-4 text-[#D4AF37]" />
-              Uppdatera mitt scorekort
+              Tillbaka till rundan
             </button>
           </div>
         </div>
 
-        {/* Brutal Ball Leaderboard Switcher: Main Team Leaderboard vs Individual Single Leaderboard */}
+        {/* Lagspel Leaderboard Switcher: Main Team Leaderboard vs Individual Single Leaderboard */}
         {isBrutalBall && (
           <div
             data-testid="brutal-ball-leaderboard-tabs"
@@ -373,7 +373,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
           </div>
         )}
 
-        {/* Optional 2-Player Team Pairing Panel in Brutal Ball */}
+        {/* Optional 2-Player Team Pairing Panel in Lagspel */}
         {isBrutalBall && showTeamBuilder && onAssignTeam && (
           <form
             onSubmit={handleSavePair}
@@ -604,7 +604,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
             {/* DESKTOP BRUTAL BALL TEAM TABLE */}
             <div className="hidden md:block mt-4 overflow-x-auto">
               <table
-                aria-label="Brutal Ball Lag-Leaderboard"
+                aria-label="Lagspel Lag-Leaderboard"
                 data-testid="desktop-brutal-team-table"
                 className="w-full border-collapse text-left text-sm"
               >

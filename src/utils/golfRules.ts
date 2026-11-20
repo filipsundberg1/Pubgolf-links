@@ -45,6 +45,8 @@ export interface PubCourse {
   ownerId: string;
   ownerName: string;
   gameMode?: PubGolfGameMode;
+  /** Öppen runda (syns under Spela, ingen kod krävs). Saknas = privat (kod). */
+  isPublic?: boolean;
 }
 
 export interface ReusablePlayerProfile {
@@ -99,6 +101,69 @@ export interface GolfScoreEvaluation {
 }
 
 export const APP_ID = 'december-links';
+
+export interface DrinkCatalogEntry {
+  label: string;
+  defaultCl: number;
+  brands: string[];
+}
+
+/** Dryckestyper med märken för scrollmenyn när man skapar en runda. */
+export const DRINK_CATALOG: Record<DrinkCategory, DrinkCatalogEntry> = {
+  lager: {
+    label: 'Öl – ljus lager',
+    defaultCl: 40,
+    brands: ['Norrlands Guld', 'Mariestads', 'Pripps Blå', 'Falcon', 'Staropramen', 'Carlsberg', 'Heineken', 'Sofiero', 'Spendrups'],
+  },
+  ipa: {
+    label: 'Öl – IPA',
+    defaultCl: 40,
+    brands: ['BrewDog Punk IPA', 'Oppigårds Amarillo', 'Brutal IPA', 'Mikkeller', 'Omnipollo'],
+  },
+  stout: {
+    label: 'Öl – stout/porter',
+    defaultCl: 40,
+    brands: ['Guinness', "Murphy's", 'Carnegie Porter', 'Brooklyn Black Chocolate Stout'],
+  },
+  cider: {
+    label: 'Cider',
+    defaultCl: 33,
+    brands: ['Somersby', 'Briska', 'Kopparberg', 'Rekorderlig', 'Strongbow'],
+  },
+  cocktail: {
+    label: 'Drink/cocktail',
+    defaultCl: 25,
+    brands: ['Gin & tonic', 'Mojito', 'Espresso martini', 'Aperol spritz', 'Moscow mule', 'Margarita'],
+  },
+  shot: {
+    label: 'Shot',
+    defaultCl: 4,
+    brands: ['Jägermeister', 'Fernet Branca', 'Tequila', 'Minttu', 'Sambuca', 'Fireball'],
+  },
+  glögg: {
+    label: 'Glögg',
+    defaultCl: 15,
+    brands: ['Blossa', 'Saturnus', 'Husets glögg'],
+  },
+  alkoholfritt: {
+    label: 'Alkoholfritt',
+    defaultCl: 33,
+    brands: ['Alkoholfri öl', 'Coca-Cola', 'Sprite', 'Ramlösa', 'Loka'],
+  },
+};
+
+export const GAME_MODE_LABELS: Record<PubGolfGameMode, { title: string; description: string }> = {
+  single: { title: 'Slagspel', description: 'Var för sig – lägst antal klunkar vinner.' },
+  brutal: { title: 'Lagspel', description: 'Lag om 2 som delas in när alla gått med – lagets klunkar räknas ihop.' },
+};
+
+/** Visar ett datum som "fre 27 nov 2026" om det är ISO (åååå-mm-dd), annars som det är. */
+export function formatEventDate(value: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const d = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleDateString('sv-SE', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+}
 
 export const VALID_DRINK_TYPES: DrinkCategory[] = [
   'stout',
