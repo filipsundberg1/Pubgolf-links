@@ -1,0 +1,323 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net: Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Hardened Global Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Validation Blueprint: Reusable PlayerProfile (/profiles/{userId})
+    function isValidProfile(data, userId) {
+      return data.keys().hasAll([
+        'uid', 'appId', 'displayName', 'nickname', 'country', 'homePub',
+        'signatureDrink', 'favoriteClub', 'handicap', 'bio', 'avatarSeed', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'uid', 'appId', 'displayName', 'nickname', 'country', 'homePub',
+        'signatureDrink', 'favoriteClub', 'handicap', 'bio', 'avatarSeed', 'updatedAt'
+      ]) &&
+      data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 &&
+      data.uid.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.uid == userId &&
+      data.uid == request.auth.uid &&
+      data.appId is string && data.appId.size() >= 1 && data.appId.size() <= 64 &&
+      data.appId == 'december-links' &&
+      data.displayName is string && data.displayName.size() >= 2 && data.displayName.size() <= 60 &&
+      data.nickname is string && data.nickname.size() >= 1 && data.nickname.size() <= 50 &&
+      data.country is string && data.country.size() >= 2 && data.country.size() <= 50 &&
+      data.homePub is string && data.homePub.size() >= 2 && data.homePub.size() <= 80 &&
+      data.signatureDrink is string && data.signatureDrink.size() >= 2 && data.signatureDrink.size() <= 80 &&
+      data.favoriteClub is string && data.favoriteClub.size() >= 2 && data.favoriteClub.size() <= 80 &&
+      data.handicap is string && data.handicap.size() >= 1 && data.handicap.size() <= 20 &&
+      data.bio is string && data.bio.size() >= 2 && data.bio.size() <= 320 &&
+      data.avatarSeed is string && data.avatarSeed.size() >= 1 && data.avatarSeed.size() <= 32 &&
+      data.updatedAt == request.time;
+    }
+
+    // Validation Blueprint: Course / Round (/courses/{courseId})
+    function isValidCourse(data, courseId) {
+      return data.keys().hasAll([
+        'courseId', 'appId', 'inviteCode', 'title', 'subtitle', 'city',
+        'eventDate', 'ownerId', 'ownerName', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'courseId', 'appId', 'inviteCode', 'title', 'subtitle', 'city',
+        'eventDate', 'ownerId', 'ownerName', 'gameMode', 'updatedAt'
+      ]) &&
+      data.courseId is string && data.courseId.size() >= 1 && data.courseId.size() <= 128 &&
+      data.courseId == courseId &&
+      data.appId is string && data.appId.size() >= 1 && data.appId.size() <= 64 &&
+      data.appId == 'december-links' &&
+      data.inviteCode is string && data.inviteCode.size() >= 4 && data.inviteCode.size() <= 16 &&
+      data.inviteCode.matches('^[A-Z0-9\\-]+$') &&
+      data.title is string && data.title.size() >= 2 && data.title.size() <= 80 &&
+      data.subtitle is string && data.subtitle.size() >= 2 && data.subtitle.size() <= 140 &&
+      data.city is string && data.city.size() >= 2 && data.city.size() <= 60 &&
+      data.eventDate is string && data.eventDate.size() >= 2 && data.eventDate.size() <= 40 &&
+      data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 &&
+      data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.ownerId == request.auth.uid &&
+      data.ownerName is string && data.ownerName.size() >= 1 && data.ownerName.size() <= 80 &&
+      (!('gameMode' in data) || (
+        data.gameMode is string &&
+        data.gameMode.size() >= 1 &&
+        data.gameMode.size() <= 20 &&
+        data.gameMode in ['single', 'brutal']
+      )) &&
+      data.updatedAt == request.time;
+    }
+
+    // Validation Blueprint: Hole (/courses/{courseId}/holes/{holeId})
+    function isValidHole(data, courseId) {
+      return data.keys().hasAll([
+        'holeNumber', 'courseId', 'ownerId', 'pubName', 'pubAddress',
+        'drinkName', 'drinkType', 'volumeCl', 'par', 'lengthMeters',
+        'shape', 'hazardTitle', 'hazardRule', 'caddieTip', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'holeNumber', 'courseId', 'ownerId', 'pubName', 'pubAddress',
+        'drinkName', 'drinkType', 'volumeCl', 'par', 'lengthMeters',
+        'shape', 'hazardTitle', 'hazardRule', 'caddieTip', 'updatedAt'
+      ]) &&
+      data.holeNumber is int && data.holeNumber >= 1 && data.holeNumber <= 9 &&
+      data.courseId is string && data.courseId.size() >= 1 && data.courseId.size() <= 128 &&
+      data.courseId == courseId &&
+      data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 &&
+      data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.ownerId == request.auth.uid &&
+      data.pubName is string && data.pubName.size() >= 2 && data.pubName.size() <= 80 &&
+      data.pubAddress is string && data.pubAddress.size() >= 2 && data.pubAddress.size() <= 120 &&
+      data.drinkName is string && data.drinkName.size() >= 2 && data.drinkName.size() <= 80 &&
+      data.drinkType is string && data.drinkType.size() <= 20 &&
+      data.drinkType in ['stout', 'lager', 'ipa', 'cider', 'cocktail', 'shot', 'glögg', 'alkoholfritt'] &&
+      data.volumeCl is int && data.volumeCl >= 2 && data.volumeCl <= 100 &&
+      data.par is int && data.par >= 1 && data.par <= 6 &&
+      data.lengthMeters is int && data.lengthMeters >= 50 && data.lengthMeters <= 650 &&
+      data.shape is string && data.shape.size() <= 20 &&
+      data.shape in ['straight', 'dogleg-left', 'dogleg-right', 'island-green', 'double-dogleg'] &&
+      data.hazardTitle is string && data.hazardTitle.size() >= 2 && data.hazardTitle.size() <= 80 &&
+      data.hazardRule is string && data.hazardRule.size() >= 2 && data.hazardRule.size() <= 180 &&
+      data.caddieTip is string && data.caddieTip.size() >= 2 && data.caddieTip.size() <= 200 &&
+      data.updatedAt == request.time;
+    }
+
+    // Validation Blueprint: RoundParticipant (/courses/{courseId}/participants/{playerId})
+    function isValidParticipant(data, courseId, playerId) {
+      return data.keys().hasAll([
+        'uid', 'courseId', 'displayName', 'nickname', 'country', 'homePub',
+        'signatureDrink', 'favoriteClub', 'handicap', 'bio', 'avatarSeed',
+        'sipsHole1', 'sipsHole2', 'sipsHole3', 'sipsHole4', 'sipsHole5',
+        'sipsHole6', 'sipsHole7', 'sipsHole8', 'sipsHole9',
+        'totalSips', 'totalToPar', 'thruHoles', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'uid', 'courseId', 'displayName', 'nickname', 'country', 'homePub',
+        'signatureDrink', 'favoriteClub', 'handicap', 'bio', 'avatarSeed',
+        'teamId', 'teamName',
+        'sipsHole1', 'sipsHole2', 'sipsHole3', 'sipsHole4', 'sipsHole5',
+        'sipsHole6', 'sipsHole7', 'sipsHole8', 'sipsHole9',
+        'totalSips', 'totalToPar', 'thruHoles', 'updatedAt'
+      ]) &&
+      data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 &&
+      data.uid.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.uid == playerId &&
+      data.courseId is string && data.courseId.size() >= 1 && data.courseId.size() <= 128 &&
+      data.courseId == courseId &&
+      data.displayName is string && data.displayName.size() >= 2 && data.displayName.size() <= 60 &&
+      data.nickname is string && data.nickname.size() >= 1 && data.nickname.size() <= 50 &&
+      data.country is string && data.country.size() >= 2 && data.country.size() <= 50 &&
+      data.homePub is string && data.homePub.size() >= 2 && data.homePub.size() <= 80 &&
+      data.signatureDrink is string && data.signatureDrink.size() >= 2 && data.signatureDrink.size() <= 80 &&
+      data.favoriteClub is string && data.favoriteClub.size() >= 2 && data.favoriteClub.size() <= 80 &&
+      data.handicap is string && data.handicap.size() >= 1 && data.handicap.size() <= 20 &&
+      data.bio is string && data.bio.size() >= 2 && data.bio.size() <= 320 &&
+      data.avatarSeed is string && data.avatarSeed.size() >= 1 && data.avatarSeed.size() <= 32 &&
+      (!('teamId' in data) || (data.teamId is string && data.teamId.size() <= 64)) &&
+      (!('teamName' in data) || (data.teamName is string && data.teamName.size() <= 60)) &&
+      data.sipsHole1 is int && data.sipsHole1 >= 0 && data.sipsHole1 <= 25 &&
+      data.sipsHole2 is int && data.sipsHole2 >= 0 && data.sipsHole2 <= 25 &&
+      data.sipsHole3 is int && data.sipsHole3 >= 0 && data.sipsHole3 <= 25 &&
+      data.sipsHole4 is int && data.sipsHole4 >= 0 && data.sipsHole4 <= 25 &&
+      data.sipsHole5 is int && data.sipsHole5 >= 0 && data.sipsHole5 <= 25 &&
+      data.sipsHole6 is int && data.sipsHole6 >= 0 && data.sipsHole6 <= 25 &&
+      data.sipsHole7 is int && data.sipsHole7 >= 0 && data.sipsHole7 <= 25 &&
+      data.sipsHole8 is int && data.sipsHole8 >= 0 && data.sipsHole8 <= 25 &&
+      data.sipsHole9 is int && data.sipsHole9 >= 0 && data.sipsHole9 <= 25 &&
+      data.totalSips is int && data.totalSips >= 0 && data.totalSips <= 225 &&
+      data.totalToPar is int && data.totalToPar >= -45 && data.totalToPar <= 180 &&
+      data.thruHoles is int && data.thruHoles >= 0 && data.thruHoles <= 9 &&
+      data.updatedAt == request.time;
+    }
+
+    // Collection: /profiles/{userId}
+    match /profiles/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && existing().appId == 'december-links';
+      allow list: if isSignedIn() && existing().appId == 'december-links';
+
+      allow create: if isVerifiedUser() &&
+        isValidId(userId) &&
+        isValidProfile(incoming(), userId);
+
+      allow update: if isVerifiedUser() &&
+        isValidId(userId) &&
+        isValidProfile(incoming(), userId) &&
+        existing().uid == request.auth.uid &&
+        incoming().uid == existing().uid &&
+        incoming().appId == existing().appId &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName', 'nickname', 'country', 'homePub', 'signatureDrink',
+          'favoriteClub', 'handicap', 'bio', 'avatarSeed', 'updatedAt'
+        ]);
+
+      allow delete: if false;
+    }
+
+    // Collection: /courses/{courseId}
+    match /courses/{courseId} {
+      allow get: if isSignedIn() && isValidId(courseId) && existing().appId == 'december-links';
+      allow list: if isSignedIn() && existing().appId == 'december-links';
+
+      allow create: if isVerifiedUser() &&
+        isValidId(courseId) &&
+        isValidCourse(incoming(), courseId);
+
+      allow update: if isVerifiedUser() &&
+        isValidId(courseId) &&
+        isValidCourse(incoming(), courseId) &&
+        existing().ownerId == request.auth.uid &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().courseId == existing().courseId &&
+        incoming().appId == existing().appId &&
+        incoming().inviteCode == existing().inviteCode &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'title', 'subtitle', 'city', 'eventDate', 'ownerName', 'gameMode', 'updatedAt'
+        ]);
+
+      allow delete: if isVerifiedUser() &&
+        isValidId(courseId) &&
+        existing().ownerId == request.auth.uid;
+
+      // Subcollection: /courses/{courseId}/holes/{holeId}
+      match /holes/{holeId} {
+        allow get: if isSignedIn() &&
+          isValidId(courseId) &&
+          isValidId(holeId) &&
+          existing().courseId == courseId &&
+          get(/databases/$(database)/documents/courses/$(courseId)).data.appId == 'december-links';
+
+        allow list: if isSignedIn() &&
+          existing().courseId == courseId;
+
+        allow create: if isVerifiedUser() &&
+          isValidId(courseId) &&
+          isValidId(holeId) &&
+          isValidHole(incoming(), courseId) &&
+          get(/databases/$(database)/documents/courses/$(courseId)).data.ownerId == request.auth.uid;
+
+        allow update: if isVerifiedUser() &&
+          isValidId(courseId) &&
+          isValidId(holeId) &&
+          isValidHole(incoming(), courseId) &&
+          existing().ownerId == request.auth.uid &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().courseId == existing().courseId &&
+          incoming().holeNumber == existing().holeNumber &&
+          get(/databases/$(database)/documents/courses/$(courseId)).data.ownerId == request.auth.uid &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'pubName', 'pubAddress', 'drinkName', 'drinkType', 'volumeCl',
+            'par', 'lengthMeters', 'shape', 'hazardTitle', 'hazardRule',
+            'caddieTip', 'updatedAt'
+          ]);
+
+        allow delete: if false;
+      }
+
+      // Subcollection: /courses/{courseId}/participants/{playerId}
+      match /participants/{playerId} {
+        allow get: if isSignedIn() &&
+          isValidId(courseId) &&
+          isValidId(playerId) &&
+          existing().courseId == courseId &&
+          get(/databases/$(database)/documents/courses/$(courseId)).data.appId == 'december-links';
+
+        allow list: if isSignedIn() &&
+          existing().courseId == courseId;
+
+        allow create: if isVerifiedUser() &&
+          isValidId(courseId) &&
+          isValidId(playerId) &&
+          isValidParticipant(incoming(), courseId, playerId) &&
+          get(/databases/$(database)/documents/courses/$(courseId)).data.appId == 'december-links' &&
+          (
+            incoming().uid == request.auth.uid ||
+            get(/databases/$(database)/documents/courses/$(courseId)).data.ownerId == request.auth.uid
+          );
+
+        allow update: if isVerifiedUser() &&
+          isValidId(courseId) &&
+          isValidId(playerId) &&
+          isValidParticipant(incoming(), courseId, playerId) &&
+          incoming().uid == existing().uid &&
+          incoming().courseId == existing().courseId &&
+          get(/databases/$(database)/documents/courses/$(courseId)).data.appId == 'december-links' &&
+          (
+            // Tier 1: Participant Owner updating their own scorecard, profile, or team
+            (
+              existing().uid == request.auth.uid &&
+              (
+                // Action 1: Update Scorecard Sips & Team
+                incoming().diff(existing()).affectedKeys().hasOnly([
+                  'teamId', 'teamName',
+                  'sipsHole1', 'sipsHole2', 'sipsHole3', 'sipsHole4', 'sipsHole5',
+                  'sipsHole6', 'sipsHole7', 'sipsHole8', 'sipsHole9',
+                  'totalSips', 'totalToPar', 'thruHoles', 'updatedAt'
+                ]) ||
+                // Action 2: Sync PGA Tour Profile, Team & Scorecard
+                incoming().diff(existing()).affectedKeys().hasOnly([
+                  'displayName', 'nickname', 'country', 'homePub', 'signatureDrink',
+                  'favoriteClub', 'handicap', 'bio', 'avatarSeed',
+                  'teamId', 'teamName',
+                  'sipsHole1', 'sipsHole2', 'sipsHole3', 'sipsHole4', 'sipsHole5',
+                  'sipsHole6', 'sipsHole7', 'sipsHole8', 'sipsHole9',
+                  'totalSips', 'totalToPar', 'thruHoles', 'updatedAt'
+                ])
+              )
+            ) ||
+            // Tier 2: Course Owner (Banarkitekt) assigning 2-player Brutal Ball teams
+            (
+              get(/databases/$(database)/documents/courses/$(courseId)).data.ownerId == request.auth.uid &&
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'teamId', 'teamName', 'updatedAt'
+              ])
+            )
+          );
+
+        allow delete: if isVerifiedUser() &&
+          isValidId(courseId) &&
+          isValidId(playerId) &&
+          existing().uid == request.auth.uid;
+      }
+    }
+  }
+}

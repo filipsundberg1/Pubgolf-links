@@ -1,0 +1,6 @@
+{
+  "name": "December Links — Pubgolf Tour & Banguide",
+  "description": "Officiellt digitalt scorekort, visuell banguide, banbyggare, live-leaderboard och PGA Tour-spelarprofiler för decembers pubgolfmästerskap.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

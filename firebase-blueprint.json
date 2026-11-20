@@ -1,0 +1,389 @@
+{
+  "entities": {
+    "PlayerProfile": {
+      "title": "PlayerProfile",
+      "description": "Permanent PGA Tour-spelarprofil som kan återanvändas i alla pubgolfrundor (utan PII).",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Spelarens Firebase Auth UID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "appId": {
+          "type": "string",
+          "description": "Applikations-ID för säker list-filtrering.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Spelarens namn på touren.",
+          "minLength": 2,
+          "maxLength": 60
+        },
+        "nickname": {
+          "type": "string",
+          "description": "Spelarens smeknamn på touren.",
+          "minLength": 1,
+          "maxLength": 50
+        },
+        "country": {
+          "type": "string",
+          "description": "Spelarens stad eller land.",
+          "minLength": 2,
+          "maxLength": 50
+        },
+        "homePub": {
+          "type": "string",
+          "description": "Spelarens hemmapub.",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "signatureDrink": {
+          "type": "string",
+          "description": "Spelarens signaturdryck.",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "favoriteClub": {
+          "type": "string",
+          "description": "Spelarens favoritklubba i bagen.",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "handicap": {
+          "type": "string",
+          "description": "Spelarens pubgolf-handicap.",
+          "minLength": 1,
+          "maxLength": 20
+        },
+        "bio": {
+          "type": "string",
+          "description": "Spelarbiografi och spelstil.",
+          "minLength": 2,
+          "maxLength": 320
+        },
+        "avatarSeed": {
+          "type": "string",
+          "description": "Färgtema för spelarkort.",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Tidpunkt för senaste uppdatering."
+        }
+      },
+      "required": [
+        "uid",
+        "appId",
+        "displayName",
+        "nickname",
+        "country",
+        "homePub",
+        "signatureDrink",
+        "favoriteClub",
+        "handicap",
+        "bio",
+        "avatarSeed",
+        "updatedAt"
+      ]
+    },
+    "Course": {
+      "title": "Course",
+      "description": "En skapad pubgolfrunda med inbjudningskod som spelare kan gå med i.",
+      "type": "object",
+      "properties": {
+        "courseId": {
+          "type": "string",
+          "description": "Unikt ID för rundan.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "appId": {
+          "type": "string",
+          "description": "Applikations-ID för säker list-filtrering.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "inviteCode": {
+          "type": "string",
+          "description": "Delbar inbjudningskod för att bjuda in vänner till rundan.",
+          "minLength": 4,
+          "maxLength": 16,
+          "pattern": "^[A-Z0-9\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "description": "Rundans/banans namn.",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "subtitle": {
+          "type": "string",
+          "description": "Undertitel eller tema för kvällen.",
+          "minLength": 2,
+          "maxLength": 140
+        },
+        "city": {
+          "type": "string",
+          "description": "Stad eller område för rundan.",
+          "minLength": 2,
+          "maxLength": 60
+        },
+        "eventDate": {
+          "type": "string",
+          "description": "Datum för rundan.",
+          "minLength": 2,
+          "maxLength": 40
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "UID för skaparen (banarkitekten).",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerName": {
+          "type": "string",
+          "description": "Namn på skaparen.",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "gameMode": {
+          "type": "string",
+          "description": "Spelform för rundan: single (Single Ball individuellt) eller brutal (Brutal Ball 2-mannalag).",
+          "enum": ["single", "brutal"],
+          "minLength": 1,
+          "maxLength": 20
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Tidpunkt för senaste uppdatering."
+        }
+      },
+      "required": [
+        "courseId",
+        "appId",
+        "inviteCode",
+        "title",
+        "subtitle",
+        "city",
+        "eventDate",
+        "ownerId",
+        "ownerName",
+        "updatedAt"
+      ]
+    },
+    "Hole": {
+      "title": "Hole",
+      "description": "Ett enskilt hål (pub) i en runda med dryck, par och visuell banprofil.",
+      "type": "object",
+      "properties": {
+        "holeNumber": {
+          "type": "integer",
+          "description": "Hålnummer mellan 1 och 9."
+        },
+        "courseId": {
+          "type": "string",
+          "description": "Referens till rundans courseId.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "UID för banarkitekten som äger rundan.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "pubName": {
+          "type": "string",
+          "description": "Pubens namn.",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "pubAddress": {
+          "type": "string",
+          "description": "Pubens gatuadress eller läge.",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "drinkName": {
+          "type": "string",
+          "description": "Dryck som spelas på hålet.",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "drinkType": {
+          "type": "string",
+          "description": "Kategori av dryck.",
+          "enum": ["stout", "lager", "ipa", "cider", "cocktail", "shot", "glögg", "alkoholfritt"]
+        },
+        "volumeCl": {
+          "type": "integer",
+          "description": "Dryckens volym i centiliter."
+        },
+        "par": {
+          "type": "integer",
+          "description": "Hålets par (antal klunkar/svep för par, 1 till 6)."
+        },
+        "lengthMeters": {
+          "type": "integer",
+          "description": "Visuell golfhålslängd i meter."
+        },
+        "shape": {
+          "type": "string",
+          "description": "Fairway-form i den visuella banguiden.",
+          "enum": ["straight", "dogleg-left", "dogleg-right", "island-green", "double-dogleg"]
+        },
+        "hazardTitle": {
+          "type": "string",
+          "description": "Namn på pubens hinder.",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "hazardRule": {
+          "type": "string",
+          "description": "Lokal regel eller pliktslag på hålet.",
+          "minLength": 2,
+          "maxLength": 180
+        },
+        "caddieTip": {
+          "type": "string",
+          "description": "Caddiens strategiska tips för hålet.",
+          "minLength": 2,
+          "maxLength": 200
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Tidpunkt för senaste uppdatering."
+        }
+      },
+      "required": [
+        "holeNumber",
+        "courseId",
+        "ownerId",
+        "pubName",
+        "pubAddress",
+        "drinkName",
+        "drinkType",
+        "volumeCl",
+        "par",
+        "lengthMeters",
+        "shape",
+        "hazardTitle",
+        "hazardRule",
+        "caddieTip",
+        "updatedAt"
+      ]
+    },
+    "RoundParticipant": {
+      "title": "RoundParticipant",
+      "description": "En spelares deltagande och live-scorekort i en specifik pubgolfrunda.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Spelarens UID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "courseId": {
+          "type": "string",
+          "description": "Rundans courseId.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": { "type": "string", "minLength": 2, "maxLength": 60 },
+        "nickname": { "type": "string", "minLength": 1, "maxLength": 50 },
+        "country": { "type": "string", "minLength": 2, "maxLength": 50 },
+        "homePub": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "signatureDrink": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "favoriteClub": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "handicap": { "type": "string", "minLength": 1, "maxLength": 20 },
+        "bio": { "type": "string", "minLength": 2, "maxLength": 320 },
+        "avatarSeed": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "teamId": {
+          "type": "string",
+          "description": "Lag-ID för 2-mannalag i Brutal Ball.",
+          "minLength": 0,
+          "maxLength": 64
+        },
+        "teamName": {
+          "type": "string",
+          "description": "Lagets namn för 2-mannalag i Brutal Ball.",
+          "minLength": 0,
+          "maxLength": 60
+        },
+        "sipsHole1": { "type": "integer" },
+        "sipsHole2": { "type": "integer" },
+        "sipsHole3": { "type": "integer" },
+        "sipsHole4": { "type": "integer" },
+        "sipsHole5": { "type": "integer" },
+        "sipsHole6": { "type": "integer" },
+        "sipsHole7": { "type": "integer" },
+        "sipsHole8": { "type": "integer" },
+        "sipsHole9": { "type": "integer" },
+        "totalSips": { "type": "integer" },
+        "totalToPar": { "type": "integer" },
+        "thruHoles": { "type": "integer" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "uid",
+        "courseId",
+        "displayName",
+        "nickname",
+        "country",
+        "homePub",
+        "signatureDrink",
+        "favoriteClub",
+        "handicap",
+        "bio",
+        "avatarSeed",
+        "sipsHole1",
+        "sipsHole2",
+        "sipsHole3",
+        "sipsHole4",
+        "sipsHole5",
+        "sipsHole6",
+        "sipsHole7",
+        "sipsHole8",
+        "sipsHole9",
+        "totalSips",
+        "totalToPar",
+        "thruHoles",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/profiles/{userId}": {
+      "schema": { "$ref": "#/entities/PlayerProfile" },
+      "description": "Återanvändbara PGA Tour-spelarprofiler."
+    },
+    "/courses/{courseId}": {
+      "schema": { "$ref": "#/entities/Course" },
+      "description": "Skapade pubgolfrundor med delbara inbjudningskoder."
+    },
+    "/courses/{courseId}/holes/{holeId}": {
+      "schema": { "$ref": "#/entities/Hole" },
+      "description": "Rundans 9 anpassningsbara pubhål."
+    },
+    "/courses/{courseId}/participants/{playerId}": {
+      "schema": { "$ref": "#/entities/RoundParticipant" },
+      "description": "Inbjudna/anslutna spelare och deras scorekort i respektive runda."
+    }
+  }
+}
