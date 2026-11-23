@@ -17,6 +17,21 @@ export default defineConfig(({mode}) => {
     define: {
       'import.meta.env.VITE_GOOGLE_MAPS_API_KEY': JSON.stringify(mapsKey),
     },
+    build: {
+      // Firebase-SDK:n är ~570 kB och går inte att dela upp mer
+      chunkSizeWarningLimit: 650,
+      rolldownOptions: {
+        output: {
+          // Firebase i egen fil så den kan cachas separat från appkoden
+          advancedChunks: {
+            groups: [
+              { name: 'firebase', test: /node_modules[\\/](@firebase|firebase)[\\/]/ },
+              { name: 'react', test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/ },
+            ],
+          },
+        },
+      },
+    },
     resolve: {
       alias: {
         '@': path.resolve(import.meta.dirname, '.'),

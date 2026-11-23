@@ -1,14 +1,14 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
-  Globe2,
   Map as MapIcon,
   Minus,
   Pencil,
   Plus,
   RotateCcw,
+  Settings2,
   Share2,
   ShieldAlert,
   Trophy,
@@ -28,17 +28,31 @@ import {
 } from '../../utils/golfRules';
 import { GolfScoreSymbol } from '../GolfScoreSymbol';
 import { GolferAvatar } from '../GolferAvatar';
-import { LeaderboardView } from '../LeaderboardView';
-import { PubRouteMap } from '../PubRouteMap';
-import { CourseGuideView } from '../CourseGuideView';
 import { Sheet } from '../shell/Sheet';
 
+// Tunga delar laddas först när de öppnas
+const LeaderboardView = lazy(() => import('../LeaderboardView').then((m) => ({ default: m.LeaderboardView })));
+const PubRouteMap = lazy(() => import('../PubRouteMap').then((m) => ({ default: m.PubRouteMap })));
+const CourseGuideView = lazy(() => import('../CourseGuideView').then((m) => ({ default: m.CourseGuideView })));
+
+const SheetFallback = () => <p className="py-8 text-center text-sm text-[#112218]/60">Laddar…</p>;
+
 interface RoundViewProps {
+  /** Rundan i PubCourse-form (courseId = rundans kod). */
   course: PubCourse;
+  /** Banan (mallen) som rundan spelas på. */
+  courseDoc: PubCourse | null;
   holes: PubHole[];
   me: PlayerTourProfile;
   players: PlayerTourProfile[];
+  /** Ägare av rundan (spelform, lag). */
   isOwner: boolean;
+  /** Ägare av banan (redigera hål). */
+  isCourseOwner: boolean;
+  /** Ägaren har raderat rundan – bara visning. */
+  readOnly: boolean;
+  locked: boolean;
+  manageSheet: React.ReactNode;
   selectedHoleNum: number;
   onSelectHole: (n: number) => void;
   onBack: () => void;
@@ -54,10 +68,15 @@ const isPlaceholder = (text: string) =>
 
 export const RoundView: React.FC<RoundViewProps> = ({
   course,
+  courseDoc,
   holes,
   me,
   players,
   isOwner,
+  isCourseOwner,
+  readOnly,
+  locked,
+  manageSheet,
   selectedHoleNum,
   onSelectHole,
   onBack,
@@ -67,7 +86,7 @@ export const RoundView: React.FC<RoundViewProps> = ({
   onAssignTeam,
   onInspectPlayer,
 }) => {
-  const [sheet, setSheet] = useState<'leaderboard' | 'map' | 'edit' | null>(null);
+  const [sheet, setSheet] = useState<'leaderboard' | 'map' | 'edit' | 'manage' | null>(null);
   const [shareNote, setShareNote] = useState<string | null>(null);
 
   const hole = holes.find((h) => h.holeNumber === selectedHoleNum) || holes[0];
@@ -127,11 +146,17 @@ export const RoundView: React.FC<RoundViewProps> = ({
             <Share2 className="h-3.5 w-3.5 text-[#D4AF37]" /> Bjud in
           </button>
           <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#112218]/60">
-            {course.isPublic ? (<><Globe2 className="h-3 w-3" /> Öppen</>) : (<>Kod <span className="font-mono tracking-wider text-[#112218]">{course.inviteCode}</span></>)}
+            {locked ? 'Låst · ' : ''}Kod <span className="font-mono tracking-wider text-[#112218]">{course.inviteCode}</span>
           </span>
           {shareNote && <span className="text-[11px] font-semibold text-[#166534]">{shareNote}</span>}
         </div>
       </div>
+
+      {readOnly && (
+        <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+          Ägaren har raderat rundan. Du kan se resultatet men inte ändra det.
+        </div>
+      )}
 
       {/* Hålväljare */}
       <div className="-mx-4 overflow-x-auto px-4">
@@ -208,7 +233,7 @@ export const RoundView: React.FC<RoundViewProps> = ({
       </section>
 
       {/* Min score */}
-      <section className="rounded-3xl border border-[#112218]/10 bg-white p-5 shadow-xs">
+      <section className={`rounded-3xl border border-[#112218]/10 bg-white p-5 shadow-xs ${readOnly ? 'pointer-events-none opacity-60' : ''}`}>
         <div className="flex items-center gap-3">
           <GolferAvatar avatarSeed={me.avatarSeed} displayName={me.displayName} size="sm" />
           <div className="min-w-0 flex-1">
@@ -292,7 +317,7 @@ export const RoundView: React.FC<RoundViewProps> = ({
             </li>
           ))}
         </ol>
-        <div className={`mt-3 grid gap-2 ${isOwner ? 'grid-cols-3' : 'grid-cols-2'}`}>
+        <div className={`mt-3 grid gap-2 ${isCourseOwner ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'}`}>
           <button type="button" onClick={() => setSheet('leaderboard')}
             className="flex items-center justify-center gap-1.5 rounded-2xl bg-[#112218] py-3 text-xs font-bold text-[#F6F4EE]">
             <Trophy className="h-4 w-4 text-[#D4AF37]" /> {course.gameMode === 'brutal' ? 'Tabell & lag' : 'Hela tabellen'}
@@ -301,17 +326,26 @@ export const RoundView: React.FC<RoundViewProps> = ({
             className="flex items-center justify-center gap-1.5 rounded-2xl border border-[#112218]/15 py-3 text-xs font-bold text-[#112218]">
             <MapIcon className="h-4 w-4 text-[#166534]" /> Karta
           </button>
-          {isOwner && (
+          <button type="button" onClick={() => setSheet('manage')}
+            className="flex items-center justify-center gap-1.5 rounded-2xl border border-[#112218]/15 py-3 text-xs font-bold text-[#112218]">
+            <Settings2 className="h-4 w-4 text-[#166534]" /> Rundan
+          </button>
+          {isCourseOwner && (
             <button type="button" onClick={() => setSheet('edit')}
               className="flex items-center justify-center gap-1.5 rounded-2xl border border-[#112218]/15 py-3 text-xs font-bold text-[#112218]">
-              <Pencil className="h-4 w-4 text-[#166534]" /> Redigera
+              <Pencil className="h-4 w-4 text-[#166534]" /> Redigera bana
             </button>
           )}
         </div>
       </section>
 
+      <Sheet open={sheet === 'manage'} title="Rundan" onClose={() => setSheet(null)}>
+        {manageSheet}
+      </Sheet>
+
       <Sheet open={sheet === 'leaderboard'} title="Leaderboard" onClose={() => setSheet(null)}>
-        <LeaderboardView
+        <Suspense fallback={<SheetFallback />}>
+        {sheet === 'leaderboard' && <LeaderboardView
           course={course}
           holes={holes}
           players={players}
@@ -324,24 +358,28 @@ export const RoundView: React.FC<RoundViewProps> = ({
             onInspectPlayer(uid);
           }}
           onGoToScorecard={() => setSheet(null)}
-        />
+        />}
+        </Suspense>
       </Sheet>
 
       <Sheet open={sheet === 'map'} title="Karta över hålen" onClose={() => setSheet(null)}>
-        <PubRouteMap
-          course={course}
+        <Suspense fallback={<SheetFallback />}>
+        {sheet === 'map' && <PubRouteMap
+          course={courseDoc || course}
           holes={holes}
           selectedHoleNum={hole.holeNumber}
           onSelectHole={onSelectHole}
-          isCourseOwner={isOwner}
+          isCourseOwner={isCourseOwner}
           compact
-        />
+        />}
+        </Suspense>
       </Sheet>
 
-      {isOwner && (
+      {isCourseOwner && courseDoc && (
         <Sheet open={sheet === 'edit'} title="Redigera banan" onClose={() => setSheet(null)}>
-          <CourseGuideView
-            course={course}
+          <Suspense fallback={<SheetFallback />}>
+          {sheet === 'edit' && <CourseGuideView
+            course={courseDoc}
             holes={holes}
             activePlayer={me}
             selectedHoleNum={hole.holeNumber}
@@ -352,7 +390,8 @@ export const RoundView: React.FC<RoundViewProps> = ({
               onSelectHole(n);
               setSheet(null);
             }}
-          />
+          />}
+          </Suspense>
         </Sheet>
       )}
     </div>

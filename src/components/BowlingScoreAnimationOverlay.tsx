@@ -1,6 +1,7 @@
 import React, { useEffect, useId, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X } from 'lucide-react';
+import { SwingGear } from './AvatarGear';
 import {
   parseAvatarSeed,
   type AvatarConfig,
@@ -708,8 +709,7 @@ export const BowlingScoreAnimationOverlay: React.FC<BowlingScoreAnimationOverlay
                   {/* Golf Club (Intact unless Disaster Act 2 where it snaps in two!) */}
                   {!(isDisaster && act === 'react') && (
                     <g transform="translate(21, 38)">
-                      <line x1="0" y1="0" x2="26" y2="42" stroke="#e2e8f0" strokeWidth="3.2" strokeLinecap="round" />
-                      <ellipse cx="29" cy="44" rx="8" ry="4.2" fill="#cbd5e1" stroke="#0f172a" strokeWidth="1.2" transform="rotate(-20 29 44)" />
+                      <SwingGear gear={config.gear} />
                     </g>
                   )}
                 </motion.g>

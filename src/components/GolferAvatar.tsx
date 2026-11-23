@@ -1,10 +1,15 @@
 import React, { useId } from 'react';
+import { Lock } from 'lucide-react';
+import { PortraitGear, SwingGear } from './AvatarGear';
 import {
+  GEAR_CATALOG,
+  isGearUnlocked,
   parseAvatarSeed,
   serializeAvatarConfig,
   type AvatarAnimationPose,
   type AvatarConfig,
   type FaceAccessory,
+  type GearUnlockStats,
   type HatStyle,
   type JacketTheme,
   type PantsStyle,
@@ -217,19 +222,8 @@ export const GolferAvatar: React.FC<GolferAvatarProps> = ({
           </g>
         )}
 
-        {/* Golf club behind torso (intact or snapped on disaster!) */}
-        {pose === 'disaster' ? (
-          <g>
-            <line x1="16" y1="45" x2="35" y2="62" stroke="#cbd5e1" strokeWidth="2.5" strokeLinecap="round" />
-            <line x1="78" y1="42" x2="64" y2="60" stroke="#cbd5e1" strokeWidth="2.5" strokeLinecap="round" />
-            <ellipse cx="15" cy="43" rx="5" ry="3" fill="#94a3b8" transform="rotate(-25 15 43)" />
-          </g>
-        ) : (
-          <g>
-            <line x1="20" y1="24" x2="76" y2="85" stroke="#cbd5e1" strokeWidth="2.4" strokeLinecap="round" />
-            <ellipse cx="19" cy="22" rx="6" ry="3.4" fill="#e2e8f0" transform="rotate(-35 19 22)" />
-          </g>
-        )}
+        {/* Gear behind torso (snapped on disaster!) */}
+        <PortraitGear gear={config.gear} snapped={pose === 'disaster'} />
 
         {/* GOLF TROUSERS / LEGS (Visible at bottom) */}
         <g>
@@ -512,6 +506,8 @@ interface AvatarCustomizerProps {
   value: string;
   onChange: (newSeed: string) => void;
   displayName?: string;
+  /** Career stats used to unlock gear. Missing stats = only the starter driver. */
+  unlockStats?: GearUnlockStats | null;
 }
 
 const JACKET_OPTIONS: { id: JacketTheme; label: string; swatch: string }[] = [
@@ -558,8 +554,10 @@ export const AvatarCustomizer: React.FC<AvatarCustomizerProps> = ({
   value,
   onChange,
   displayName = 'Din Golfare',
+  unlockStats,
 }) => {
   const current = parseAvatarSeed(value);
+  const unlockedCount = GEAR_CATALOG.filter((g) => isGearUnlocked(g.id, unlockStats)).length;
 
   const updateField = <K extends keyof AvatarConfig>(key: K, val: AvatarConfig[K]) => {
     const next: AvatarConfig = {
@@ -730,6 +728,59 @@ export const AvatarCustomizer: React.FC<AvatarCustomizerProps> = ({
               );
             })}
           </div>
+        </div>
+      </div>
+
+      {/* 6. Gear (unlocked through play) */}
+      <div>
+        <div className="mb-1.5 flex items-baseline justify-between gap-2">
+          <label className="block text-[11px] uppercase tracking-wider text-[#54635b] font-semibold">
+            6. Gear
+          </label>
+          <span className="text-[11px] font-semibold text-[#856a32]">
+            {unlockedCount}/{GEAR_CATALOG.length} upplåsta
+          </span>
+        </div>
+        <div className="grid grid-cols-1 min-[400px]:grid-cols-2 gap-1.5">
+          {GEAR_CATALOG.map((opt) => {
+            const active = current.gear === opt.id;
+            const unlocked = isGearUnlocked(opt.id, unlockStats);
+            const [have, goal] = opt.progress(
+              unlockStats || { roundsPlayed: 0, careerBirdies: 0, careerEagles: 0, careerAcesAndAlbatrosses: 0 }
+            );
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                data-testid={`avatar-gear-${opt.id}`}
+                disabled={!unlocked}
+                onClick={() => updateField('gear', opt.id)}
+                title={unlocked ? opt.label : `Låses upp: ${opt.requirement}`}
+                className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 text-left text-xs font-semibold transition ${
+                  active
+                    ? 'bg-[#0b2b1e] text-[#f4efe4] border-[#c5a059]'
+                    : unlocked
+                    ? 'bg-white text-[#141a17] border-[#d8d0c0] hover:border-[#0b2b1e] cursor-pointer'
+                    : 'bg-[#efeae0] text-[#141a17]/45 border-dashed border-[#d8d0c0] cursor-not-allowed'
+                }`}
+              >
+                <svg viewBox="-14 -12 58 66" className={`h-10 w-10 shrink-0 rounded-md ${active ? 'bg-white/10' : 'bg-[#0b2b1e]/90'} ${unlocked ? '' : 'opacity-40 grayscale'}`} aria-hidden="true">
+                  <SwingGear gear={opt.id} />
+                </svg>
+                <span className="min-w-0">
+                  <span className="flex items-center gap-1">
+                    {!unlocked && <Lock className="h-3 w-3 shrink-0" />}
+                    <span className="truncate">{opt.label}</span>
+                  </span>
+                  {!unlocked && (
+                    <span className="block text-[11px] font-medium leading-tight">
+                      {opt.requirement} ({Math.min(have, goal)}/{goal})
+                    </span>
+                  )}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>

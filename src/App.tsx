@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import {
   getRedirectResult,
   onAuthStateChanged,
@@ -13,28 +13,21 @@ import {
   type User,
 } from 'firebase/auth';
 import {
+  arrayRemove,
+  arrayUnion,
   collection,
-  deleteDoc,
   doc,
+  getDoc,
   getDocs,
   onSnapshot,
   query,
   serverTimestamp,
   setDoc,
+  updateDoc,
   where,
+  writeBatch,
 } from 'firebase/firestore';
-import {
-  ClipboardList,
-  Compass,
-  Trophy,
-  Users,
-  LogIn,
-  LogOut,
-  Flag,
-  PlusCircle,
-  ShieldCheck,
-  Award,
-} from 'lucide-react';
+import { LogIn } from 'lucide-react';
 import {
   auth,
   db,
@@ -46,57 +39,77 @@ import {
 } from './lib/firebase';
 import {
   APP_ID,
+  ROUND_CODE_PATTERN,
   buildScoreCelebrationClip,
   calculatePlayerCareerStats,
   calculateRoundSummary,
   createBlankHolesForCourse,
   generateInviteCode,
+  generatePlayerCode,
+  generateRoundCode,
   mergeTourProfiles,
+  normalizePlayerCode,
+  roundAsCourse,
   type PlayerCareerStats,
   type PlayerTourProfile,
   type PubCourse,
   type PubGolfGameMode,
   type PubHole,
+  type PubRound,
   type ReusablePlayerProfile,
   type ScoreCelebrationClip,
 } from './utils/golfRules';
-import { HERO_CLUBHOUSE_IMG, TROPHY_CLARET_IMG } from './data/defaultTourData';
-import { RoundsLobbyView, type InitialHoleDraft } from './components/RoundsLobbyView';
-import { ScorecardView } from './components/ScorecardView';
-import { CourseGuideView } from './components/CourseGuideView';
-import { LeaderboardView } from './components/LeaderboardView';
-import { PgaPlayersView } from './components/PgaPlayersView';
-import { GolferAvatar } from './components/GolferAvatar';
-import { BowlingScoreAnimationOverlay } from './components/BowlingScoreAnimationOverlay';
+import {
+  EMPTY_SIPS,
+  coursePayload,
+  holePayload,
+  parseCourse,
+  parseHole,
+  parseLegacyParticipant,
+  parseProfile,
+  parseRound,
+  parseRoundParticipant,
+  profilePayload,
+  roundParticipantPayload,
+  roundPayload,
+} from './lib/tourData';
+import { HERO_CLUBHOUSE_IMG } from './data/defaultTourData';
 import { APIProvider } from '@vis.gl/react-google-maps';
 import { AppHeader } from './components/shell/AppHeader';
 import { HomeView } from './components/views/HomeView';
-import { CreateRoundView, type CreateRoundInput } from './components/views/CreateRoundView';
+import { CreateCourseView, type CreateCourseInput } from './components/views/CreateCourseView';
+import { StartRoundView, type StartRoundInput } from './components/views/StartRoundView';
 import { PlayView } from './components/views/PlayView';
 import { RoundView } from './components/views/RoundView';
-import { MyProfileView, withProfileDefaults } from './components/views/MyProfileView';
+import { RoundManageSheet } from './components/views/RoundManageSheet';
+import { MyProfileView, withProfileDefaults, type ProfileHistoryEntry } from './components/views/MyProfileView';
 import { AboutView } from './components/views/AboutView';
 
-type ActiveTab = 'lobby' | 'scorecard' | 'guide' | 'leaderboard' | 'players';
-type View = 'home' | 'create' | 'play' | 'round' | 'profile' | 'players' | 'about';
+// Laddas först när de behövs
+const PgaPlayersView = lazy(() => import('./components/PgaPlayersView').then((m) => ({ default: m.PgaPlayersView })));
+const BowlingScoreAnimationOverlay = lazy(() =>
+  import('./components/BowlingScoreAnimationOverlay').then((m) => ({ default: m.BowlingScoreAnimationOverlay }))
+);
+
+type View = 'home' | 'create' | 'start' | 'play' | 'round' | 'profile' | 'players' | 'about';
+
+type ProfileFieldsInput = {
+  displayName: string;
+  nickname: string;
+  country: string;
+  homePub: string;
+  signatureDrink: string;
+  favoriteClub: string;
+  handicap: string;
+  bio: string;
+  avatarSeed: string;
+};
+
+const roundRef = (roundId: string) => doc(db, 'rounds', roundId);
+const participantRef = (roundId: string, uid: string) => doc(db, 'rounds', roundId, 'participants', uid);
+const isPermissionError = (err: unknown) => String((err as Error)?.message || '').includes('Missing or insufficient permissions');
 
 export default function App() {
-  // Clean up any legacy unauthenticated localStorage keys
-  useEffect(() => {
-    try {
-      localStorage.removeItem('december_links_course_v1');
-      localStorage.removeItem('december_links_holes_v1');
-      localStorage.removeItem('december_links_players_v1');
-      localStorage.removeItem('pubgolf_my_profile_v2');
-      localStorage.removeItem('pubgolf_courses_v2');
-      localStorage.removeItem('pubgolf_holes_by_course_v2');
-      localStorage.removeItem('pubgolf_participants_by_course_v2');
-      localStorage.removeItem('pubgolf_active_course_id_v2');
-    } catch {
-      // ignore storage errors
-    }
-  }, []);
-
   const initialJoinParam = (() => {
     try {
       const params = new URLSearchParams(window.location.search);
@@ -106,7 +119,6 @@ export default function App() {
     }
   })();
 
-  const [activeTab, setActiveTab] = useState<ActiveTab>('lobby');
   const [view, setViewState] = useState<View>(initialJoinParam ? 'play' : 'home');
   const setView = (next: View) => {
     setViewState(next);
@@ -119,22 +131,23 @@ export default function App() {
   const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [isSigningIn, setIsSigningIn] = useState<boolean>(false);
 
-  // Authenticated state (populated strictly when firebaseUser is signed in)
   const [myProfile, setMyProfile] = useState<ReusablePlayerProfile | null>(null);
   const [allProfiles, setAllProfiles] = useState<ReusablePlayerProfile[]>([]);
   const [courses, setCourses] = useState<PubCourse[]>([]);
-  const [activeCourseId, setActiveCourseId] = useState<string | null>(null);
+  const [coursesLoaded, setCoursesLoaded] = useState(false);
   const [holesByCourse, setHolesByCourse] = useState<Record<string, PubHole[]>>({});
-  const [participantsByCourse, setParticipantsByCourse] = useState<
-    Record<string, PlayerTourProfile[]>
-  >({});
+  const [rounds, setRounds] = useState<PubRound[]>([]);
+  const [roundsLoaded, setRoundsLoaded] = useState(false);
+  const [participantsByRound, setParticipantsByRound] = useState<Record<string, PlayerTourProfile[]>>({});
+  const [activeRoundId, setActiveRoundId] = useState<string | null>(null);
+  const [startCourseId, setStartCourseId] = useState<string | null>(null);
   const [selectedPlayerUid, setSelectedPlayerUid] = useState<string>('');
-  const [activeCelebrationClip, setActiveCelebrationClip] =
-    useState<ScoreCelebrationClip | null>(null);
+  const [activeCelebrationClip, setActiveCelebrationClip] = useState<ScoreCelebrationClip | null>(null);
   const [gmpQuotaExceeded, setGmpQuotaExceeded] = useState<boolean>(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [deletedPromptBusy, setDeletedPromptBusy] = useState(false);
 
-  // Firestore listener errors are shown as a banner instead of crashing.
   useEffect(() => {
     const onSyncError = () =>
       setSyncError('Kunde inte hämta senaste datan. Kontrollera uppkopplingen och ladda om sidan.');
@@ -142,7 +155,6 @@ export default function App() {
     return () => window.removeEventListener('firestore-sync-error', onSyncError);
   }, []);
 
-  // Finish a redirect-based sign-in (fallback when popups are blocked).
   useEffect(() => {
     getRedirectResult(auth).catch((err) => {
       console.error('Redirect sign-in failed', err);
@@ -150,28 +162,23 @@ export default function App() {
     });
   }, []);
 
-  // Listen for Google Maps Platform quota exceeded event (Section 8 Case A)
   useEffect(() => {
     const handleQuotaExceeded = () => setGmpQuotaExceeded(true);
     window.addEventListener('gmp-quota-exceeded', handleQuotaExceeded);
     return () => window.removeEventListener('gmp-quota-exceeded', handleQuotaExceeded);
   }, []);
 
-  // Track previous hole sips per course & player so any new score registered by ANY player
-  // in the active round triggers the bowling-alley celebration/roast clip for everyone!
-  const prevSipsByCourseRef = useRef<Record<string, Record<string, number[]>>>({});
-  const activeCourseIdRef = useRef<string | null>(null);
-  const holesByCourseRef = useRef<Record<string, PubHole[]>>({});
+  // Senast kända klunkar per runda/spelare – nya scorer från vem som helst i den aktiva rundan
+  // triggar bowlingfirandet för alla.
+  const prevSipsByRoundRef = useRef<Record<string, Record<string, number[]>>>({});
+  const activeRoundIdRef = useRef<string | null>(null);
+  const holesForRoundRef = useRef<(roundId: string) => PubHole[]>(() => []);
 
   useEffect(() => {
-    activeCourseIdRef.current = activeCourseId;
-  }, [activeCourseId]);
+    activeRoundIdRef.current = activeRoundId;
+  }, [activeRoundId]);
 
-  useEffect(() => {
-    holesByCourseRef.current = holesByCourse;
-  }, [holesByCourse]);
-
-  // Listen to Firebase Auth state
+  // Firebase Auth
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
       setFirebaseUser(user);
@@ -179,21 +186,22 @@ export default function App() {
       if (user) {
         setSelectedPlayerUid(user.uid);
       } else {
-        // Strictly clear all user/round data when logged out
         setMyProfile(null);
         setAllProfiles([]);
         setCourses([]);
-        setActiveCourseId(null);
+        setCoursesLoaded(false);
         setHolesByCourse({});
-        setParticipantsByCourse({});
+        setRounds([]);
+        setRoundsLoaded(false);
+        setParticipantsByRound({});
+        setActiveRoundId(null);
         setSelectedPlayerUid('');
-        setActiveTab('lobby');
       }
     });
     return () => unsub();
   }, []);
 
-  // Subscribe to user's profile, all tour profiles, and courses in Firestore ONLY when authenticated
+  // Profiler, banor och mina rundor
   useEffect(() => {
     if (!authReady || !firebaseUser) return;
 
@@ -202,290 +210,258 @@ export default function App() {
       myProfileRef,
       (snap) => {
         if (snap.exists()) {
-          const d = snap.data();
-          setMyProfile({
-            uid: String(d.uid),
-            appId: String(d.appId || APP_ID),
-            displayName: String(d.displayName),
-            nickname: String(d.nickname),
-            country: String(d.country),
-            homePub: String(d.homePub),
-            signatureDrink: String(d.signatureDrink),
-            favoriteClub: String(d.favoriteClub),
-            handicap: String(d.handicap),
-            bio: String(d.bio),
-            avatarSeed: String(d.avatarSeed || 'emerald'),
-          });
+          setMyProfile(parseProfile(snap.data()));
         } else {
           setMyProfile(null);
           // Första inloggningen: skapa en spelarprofil med namnet från Google
           if (!snap.metadata.fromCache) {
             const googleName = (firebaseUser.displayName || '').trim();
-            void setDoc(myProfileRef, {
-              uid: firebaseUser.uid,
-              appId: APP_ID,
-              displayName: (googleName.length >= 2 ? googleName : 'Spelare').slice(0, 60),
-              nickname: 'Rookie',
-              country: 'Stockholm',
-              homePub: 'Klubbhuset',
-              signatureDrink: 'Lager',
-              favoriteClub: 'Driver',
-              handicap: '0.0',
-              bio: 'Ny på touren.',
-              avatarSeed: 'emerald',
-              updatedAt: serverTimestamp(),
-            }).catch((err) => console.error('Kunde inte skapa profil', err));
+            const displayName = (googleName.length >= 2 ? googleName : 'Spelare').slice(0, 60);
+            void setDoc(
+              myProfileRef,
+              profilePayload({
+                uid: firebaseUser.uid,
+                appId: APP_ID,
+                displayName,
+                nickname: 'Rookie',
+                country: 'Stockholm',
+                homePub: 'Klubbhuset',
+                signatureDrink: 'Lager',
+                favoriteClub: 'Driver',
+                handicap: '0.0',
+                bio: 'Ny på touren.',
+                avatarSeed: 'emerald',
+                playerCode: generatePlayerCode(displayName),
+              })
+            ).catch((err) => console.error('Kunde inte skapa profil', err));
           }
         }
       },
       (err) => {
-        if (err && !String(err.message).includes('Missing or insufficient permissions')) {
-          reportFirestoreError(err, OperationType.GET, `profiles/${firebaseUser.uid}`);
-        }
+        if (!isPermissionError(err)) reportFirestoreError(err, OperationType.GET, `profiles/${firebaseUser.uid}`);
       }
     );
 
-    const allProfilesQuery = query(collection(db, 'profiles'), where('appId', '==', APP_ID));
     const unsubAllProfiles = onSnapshot(
-      allProfilesQuery,
-      (snap) => {
-        const loadedProfiles: ReusablePlayerProfile[] = [];
-        snap.forEach((docSnap) => {
-          const d = docSnap.data();
-          loadedProfiles.push({
-            uid: String(d.uid),
-            appId: String(d.appId || APP_ID),
-            displayName: String(d.displayName),
-            nickname: String(d.nickname),
-            country: String(d.country),
-            homePub: String(d.homePub),
-            signatureDrink: String(d.signatureDrink),
-            favoriteClub: String(d.favoriteClub),
-            handicap: String(d.handicap),
-            bio: String(d.bio),
-            avatarSeed: String(d.avatarSeed || 'emerald'),
-          });
-        });
-        setAllProfiles(loadedProfiles);
-      },
+      query(collection(db, 'profiles'), where('appId', '==', APP_ID)),
+      (snap) => setAllProfiles(snap.docs.map((d) => parseProfile(d.data()))),
       (err) => {
-        if (err && !String(err.message).includes('Missing or insufficient permissions')) {
-          reportFirestoreError(err, OperationType.LIST, 'profiles');
-        }
+        if (!isPermissionError(err)) reportFirestoreError(err, OperationType.LIST, 'profiles');
       }
     );
 
-    const coursesQuery = query(collection(db, 'courses'), where('appId', '==', APP_ID));
     const unsubCourses = onSnapshot(
-      coursesQuery,
+      query(collection(db, 'courses'), where('appId', '==', APP_ID)),
       (snap) => {
-        const loadedCourses: PubCourse[] = [];
-        snap.forEach((docSnap) => {
-          const d = docSnap.data();
-          loadedCourses.push({
-            courseId: String(d.courseId),
-            appId: String(d.appId || APP_ID),
-            inviteCode: String(d.inviteCode),
-            title: String(d.title),
-            subtitle: String(d.subtitle),
-            city: String(d.city),
-            eventDate: String(d.eventDate),
-            ownerId: String(d.ownerId),
-            ownerName: String(d.ownerName),
-            gameMode: d.gameMode === 'brutal' ? 'brutal' : 'single',
-            isPublic: d.isPublic === true,
-          });
-        });
-        setCourses(loadedCourses);
-        setActiveCourseId((prev) => {
-          if (prev && loadedCourses.some((c) => c.courseId === prev)) return prev;
-          return null;
-        });
+        setCourses(snap.docs.map((d) => parseCourse(d.data())));
+        setCoursesLoaded(true);
       },
-      (err) => {
-        reportFirestoreError(err, OperationType.LIST, 'courses');
-      }
+      (err) => reportFirestoreError(err, OperationType.LIST, 'courses')
+    );
+
+    const unsubRounds = onSnapshot(
+      query(collection(db, 'rounds'), where('memberIds', 'array-contains', firebaseUser.uid)),
+      (snap) => {
+        setRounds(snap.docs.map((d) => parseRound(d.data())));
+        setRoundsLoaded(true);
+      },
+      (err) => reportFirestoreError(err, OperationType.LIST, 'rounds')
     );
 
     return () => {
       unsubProfile();
       unsubAllProfiles();
       unsubCourses();
+      unsubRounds();
     };
   }, [authReady, firebaseUser]);
 
-  const courseIdsKey = courses
-    .map((c) => c.courseId)
-    .sort()
-    .join(',');
-
-  // Subscribe to holes and participants across all courses when signed in so career stats
-  // and automatic Handicap work across all rounds
+  // Hål för alla banor (banguiden är läsbar för alla inloggade)
+  const courseIdsKey = courses.map((c) => c.courseId).sort().join(',');
   useEffect(() => {
     if (!authReady || !firebaseUser || !courseIdsKey) return;
-
-    const courseIds = courseIdsKey.split(',').filter(Boolean);
-    const unsubscribers: Array<() => void> = [];
-
-    for (const cId of courseIds) {
-      const holesQuery = query(
-        collection(db, 'courses', cId, 'holes'),
-        where('courseId', '==', cId)
-      );
-      const unsubHoles = onSnapshot(
-        holesQuery,
+    const unsubs = courseIdsKey.split(',').map((cId) =>
+      onSnapshot(
+        query(collection(db, 'courses', cId, 'holes'), where('courseId', '==', cId)),
         (snap) => {
-          if (!snap.empty) {
-            const loadedHoles: PubHole[] = [];
-            snap.forEach((docSnap) => {
-              const d = docSnap.data();
-              loadedHoles.push({
-                holeNumber: Number(d.holeNumber),
-                courseId: String(d.courseId),
-                ownerId: String(d.ownerId),
-                pubName: String(d.pubName),
-                pubAddress: String(d.pubAddress),
-                drinkName: String(d.drinkName),
-                drinkType: d.drinkType,
-                volumeCl: Number(d.volumeCl),
-                par: Number(d.par),
-                lengthMeters: Number(d.lengthMeters),
-                shape: d.shape,
-                hazardTitle: String(d.hazardTitle),
-                hazardRule: String(d.hazardRule),
-                caddieTip: String(d.caddieTip),
-              });
-            });
-            loadedHoles.sort((a, b) => a.holeNumber - b.holeNumber);
-            setHolesByCourse((prev) => ({
-              ...prev,
-              [cId]: loadedHoles,
-            }));
-          }
+          if (snap.empty) return;
+          const holes = snap.docs.map((d) => parseHole(d.data())).sort((a, b) => a.holeNumber - b.holeNumber);
+          setHolesByCourse((prev) => ({ ...prev, [cId]: holes }));
         },
         (err) => {
-          if (err && !String(err.message).includes('Missing or insufficient permissions')) {
-            reportFirestoreError(err, OperationType.LIST, `courses/${cId}/holes`);
-          }
+          if (!isPermissionError(err)) reportFirestoreError(err, OperationType.LIST, `courses/${cId}/holes`);
         }
-      );
-      unsubscribers.push(unsubHoles);
+      )
+    );
+    return () => unsubs.forEach((u) => u());
+  }, [authReady, firebaseUser, courseIdsKey]);
 
-      const partsQuery = query(
-        collection(db, 'courses', cId, 'participants'),
-        where('courseId', '==', cId)
-      );
-      const unsubParts = onSnapshot(
-        partsQuery,
+  // Deltagare i mina rundor
+  const roundIdsKey = rounds.map((r) => r.roundId).sort().join(',');
+  useEffect(() => {
+    if (!authReady || !firebaseUser || !roundIdsKey) return;
+    const unsubs = roundIdsKey.split(',').map((rId) =>
+      onSnapshot(
+        collection(db, 'rounds', rId, 'participants'),
         (snap) => {
-          const loadedParts: PlayerTourProfile[] = [];
-          snap.forEach((docSnap) => {
-            const d = docSnap.data();
-            loadedParts.push({
-              uid: String(d.uid),
-              appId: APP_ID,
-              courseId: String(d.courseId),
-              displayName: String(d.displayName),
-              nickname: String(d.nickname),
-              country: String(d.country),
-              homePub: String(d.homePub),
-              signatureDrink: String(d.signatureDrink),
-              favoriteClub: String(d.favoriteClub),
-              handicap: String(d.handicap),
-              bio: String(d.bio),
-              avatarSeed: String(d.avatarSeed || 'emerald'),
-              sips: [
-                Number(d.sipsHole1 || 0),
-                Number(d.sipsHole2 || 0),
-                Number(d.sipsHole3 || 0),
-                Number(d.sipsHole4 || 0),
-                Number(d.sipsHole5 || 0),
-                Number(d.sipsHole6 || 0),
-                Number(d.sipsHole7 || 0),
-                Number(d.sipsHole8 || 0),
-                Number(d.sipsHole9 || 0),
-              ],
-              totalSips: Number(d.totalSips || 0),
-              totalToPar: Number(d.totalToPar || 0),
-              thruHoles: Number(d.thruHoles || 0),
-              teamId: d.teamId ? String(d.teamId) : undefined,
-              teamName: d.teamName ? String(d.teamName) : undefined,
-            });
-          });
+          const loaded = snap.docs.map((d) => parseRoundParticipant(d.data(), rId));
 
-          // Detect newly registered hole scores from participants in the round
-          const prevCourseMap = prevSipsByCourseRef.current[cId];
-          const nextCourseMap: Record<string, number[]> = {};
-
-          if (!prevCourseMap) {
-            for (const part of loadedParts) {
-              nextCourseMap[part.uid] = [...part.sips];
-            }
-            prevSipsByCourseRef.current[cId] = nextCourseMap;
-          } else {
-            for (const part of loadedParts) {
-              const oldSips = prevCourseMap[part.uid] || [0, 0, 0, 0, 0, 0, 0, 0, 0];
-              nextCourseMap[part.uid] = [...part.sips];
-
-              if (cId === activeCourseIdRef.current) {
-                for (let idx = 0; idx < 9; idx++) {
-                  const newVal = part.sips[idx] ?? 0;
-                  const oldVal = oldSips[idx] ?? 0;
-                  if (newVal > 0 && newVal !== oldVal) {
-                    const courseHoles =
-                      holesByCourseRef.current[cId] ||
-                      createBlankHolesForCourse(cId, part.uid);
-                    const holeObj =
-                      courseHoles.find((h) => h.holeNumber === idx + 1) || {
-                        holeNumber: idx + 1,
-                        pubName: `Hål ${idx + 1}`,
-                        drinkName: part.signatureDrink || 'Tävlingsdryck',
-                        par: 4,
-                      };
-                    const clip = buildScoreCelebrationClip({
-                      playerUid: part.uid,
-                      playerName: part.displayName,
-                      playerNickname: part.nickname,
-                      avatarSeed: part.avatarSeed,
-                      holeNumber: idx + 1,
-                      pubName: holeObj.pubName,
-                      drinkName: holeObj.drinkName,
-                      sips: newVal,
-                      par: holeObj.par,
-                    });
-                    setActiveCelebrationClip(clip);
-                  }
-                }
+          // Upptäck nya scorer i den aktiva rundan
+          const prevMap = prevSipsByRoundRef.current[rId];
+          const nextMap: Record<string, number[]> = {};
+          for (const part of loaded) {
+            nextMap[part.uid] = [...part.sips];
+            if (!prevMap || rId !== activeRoundIdRef.current) continue;
+            const oldSips = prevMap[part.uid] || EMPTY_SIPS;
+            for (let idx = 0; idx < 9; idx++) {
+              const newVal = part.sips[idx] ?? 0;
+              if (newVal > 0 && newVal !== (oldSips[idx] ?? 0)) {
+                const hole = holesForRoundRef.current(rId).find((h) => h.holeNumber === idx + 1);
+                setActiveCelebrationClip(
+                  buildScoreCelebrationClip({
+                    playerUid: part.uid,
+                    playerName: part.displayName,
+                    playerNickname: part.nickname,
+                    avatarSeed: part.avatarSeed,
+                    holeNumber: idx + 1,
+                    pubName: hole?.pubName || `Hål ${idx + 1}`,
+                    drinkName: hole?.drinkName || 'Tävlingsdryck',
+                    sips: newVal,
+                    par: hole?.par || 4,
+                  })
+                );
               }
             }
-            prevSipsByCourseRef.current[cId] = nextCourseMap;
           }
-
-          setParticipantsByCourse((prev) => ({
-            ...prev,
-            [cId]: loadedParts,
-          }));
+          prevSipsByRoundRef.current[rId] = nextMap;
+          setParticipantsByRound((prev) => ({ ...prev, [rId]: loaded }));
         },
         (err) => {
-          if (err && !String(err.message).includes('Missing or insufficient permissions')) {
-            reportFirestoreError(err, OperationType.LIST, `courses/${cId}/participants`);
-          }
+          if (!isPermissionError(err)) reportFirestoreError(err, OperationType.LIST, `rounds/${rId}/participants`);
         }
-      );
-      unsubscribers.push(unsubParts);
-    }
+      )
+    );
+    return () => unsubs.forEach((u) => u());
+  }, [authReady, firebaseUser, roundIdsKey]);
 
-    return () => {
-      for (const unsub of unsubscribers) {
-        unsub();
+  // ---- Härledd data (beräknas även före inloggning så att hooks nedan körs i samma ordning) ----
+  const currentUid = firebaseUser?.uid || '';
+  const courseById = new Map(courses.map((c) => [c.courseId, c]));
+  const holesForCourse = (courseId: string, ownerId: string) =>
+    holesByCourse[courseId] || createBlankHolesForCourse(courseId, ownerId);
+  const holesForRound = (roundId: string): PubHole[] => {
+    const r = rounds.find((x) => x.roundId === roundId);
+    if (!r) return [];
+    return holesForCourse(r.courseId, courseById.get(r.courseId)?.ownerId || r.ownerId);
+  };
+  holesForRoundRef.current = holesForRound;
+
+  const roundCourses: PubCourse[] = rounds.map((r) => roundAsCourse(r, courseById.get(r.courseId)));
+  const holesByRoundId: Record<string, PubHole[]> = {};
+  for (const r of rounds) holesByRoundId[r.roundId] = holesForRound(r.roundId);
+
+  // Rundor man valt att inte räkna i HCP tas bort ur statistiken
+  const statsParticipantsByRound: Record<string, PlayerTourProfile[]> = {};
+  for (const [rId, parts] of Object.entries(participantsByRound)) {
+    statsParticipantsByRound[rId] = parts.filter((p) => p.countsForHcp !== false);
+  }
+
+  const profileByUid = new Map(allProfiles.map((p) => [p.uid, p]));
+  if (myProfile) profileByUid.set(myProfile.uid, myProfile);
+
+  const statsUids = new Set<string>([currentUid, ...profileByUid.keys()]);
+  for (const parts of Object.values(participantsByRound)) parts.forEach((p) => statsUids.add(p.uid));
+  const careerStatsByUid: Record<string, PlayerCareerStats> = {};
+  for (const uid of statsUids) {
+    if (!uid) continue;
+    const stats = calculatePlayerCareerStats(uid, roundCourses, statsParticipantsByRound, holesByRoundId);
+    // Andra spelares rundor syns bara om man spelat med dem – visa då deras sparade HCP
+    const stored = profileByUid.get(uid)?.handicap;
+    careerStatsByUid[uid] =
+      uid !== currentUid && stats.roundsPlayed === 0 && stored ? { ...stats, computedHandicap: stored } : stats;
+  }
+  const myComputedHandicap = careerStatsByUid[currentUid]?.computedHandicap || '0.0';
+
+  const allDataLoaded =
+    coursesLoaded &&
+    roundsLoaded &&
+    rounds.every((r) => participantsByRound[r.roundId] && holesByCourse[r.courseId]);
+
+  // Ge äldre profiler ett spelar-ID
+  useEffect(() => {
+    if (!myProfile || myProfile.playerCode) return;
+    const taken = new Set(allProfiles.map((p) => p.playerCode).filter(Boolean));
+    let code = generatePlayerCode(myProfile.displayName);
+    for (let i = 0; i < 20 && taken.has(code); i++) code = generatePlayerCode(myProfile.displayName);
+    void setDoc(doc(db, 'profiles', myProfile.uid), profilePayload({ ...myProfile, playerCode: code })).catch((err) =>
+      console.error('Kunde inte spara spelar-ID', err)
+    );
+  }, [myProfile, allProfiles]);
+
+  // Håll profilens HCP i synk så att andra ser rätt HCP
+  useEffect(() => {
+    if (!myProfile || !myProfile.playerCode || !allDataLoaded) return;
+    if (myProfile.handicap === myComputedHandicap) return;
+    void setDoc(doc(db, 'profiles', myProfile.uid), profilePayload({ ...myProfile, handicap: myComputedHandicap })).catch(
+      (err) => console.error('Kunde inte uppdatera HCP', err)
+    );
+  }, [myProfile, myComputedHandicap, allDataLoaded]);
+
+  // Flytta över gamla rundor (deltagare direkt under banan) till egna rundor. Körs av banans ägare.
+  const migrationDoneRef = useRef(false);
+  useEffect(() => {
+    if (!firebaseUser || !coursesLoaded || !myProfile || migrationDoneRef.current) return;
+    migrationDoneRef.current = true;
+    const mine = courses.filter((c) => c.ownerId === firebaseUser.uid && ROUND_CODE_PATTERN.test(c.inviteCode));
+    void (async () => {
+      for (const course of mine) {
+        try {
+          const legacy = await getDocs(
+            query(collection(db, 'courses', course.courseId, 'participants'), where('courseId', '==', course.courseId))
+          );
+          if (legacy.empty) continue;
+          const existing = await getDoc(roundRef(course.inviteCode));
+          if (existing.exists()) continue;
+          const parts = legacy.docs.map((d) => parseLegacyParticipant(d.data()));
+          const holesSnap = await getDocs(
+            query(collection(db, 'courses', course.courseId, 'holes'), where('courseId', '==', course.courseId))
+          );
+          const holes = holesSnap.empty
+            ? createBlankHolesForCourse(course.courseId, course.ownerId)
+            : holesSnap.docs.map((d) => parseHole(d.data())).sort((a, b) => a.holeNumber - b.holeNumber);
+          const memberIds = Array.from(new Set([firebaseUser.uid, ...parts.map((p) => p.uid)])).slice(0, 40);
+          const batch = writeBatch(db);
+          batch.set(
+            roundRef(course.inviteCode),
+            roundPayload({
+              roundId: course.inviteCode,
+              appId: APP_ID,
+              courseId: course.courseId,
+              courseTitle: course.title,
+              city: course.city,
+              eventDate: course.eventDate,
+              ownerId: firebaseUser.uid,
+              ownerName: course.ownerName,
+              gameMode: course.gameMode === 'brutal' ? 'brutal' : 'single',
+              memberIds,
+              locked: false,
+              status: 'active',
+            })
+          );
+          for (const p of parts.filter((x) => memberIds.includes(x.uid))) {
+            batch.set(participantRef(course.inviteCode, p.uid), roundParticipantPayload(p, course.inviteCode, holes));
+          }
+          await batch.commit();
+        } catch (err) {
+          console.error('Kunde inte flytta över gammal runda', course.courseId, err);
+        }
       }
-    };
-  }, [authReady, firebaseUser, courseIdsKey]);
+    })();
+  }, [firebaseUser, coursesLoaded, courses, myProfile]);
 
   const handleGoogleSignIn = async () => {
     setAuthNotice(null);
     if (isInAppBrowser()) {
-      // Google blocks OAuth inside Messenger/Facebook/Instagram webviews.
       setAuthNotice(
         'Google-inloggning fungerar inte i Messenger/Facebook-webbläsaren. Tryck på ⋯ uppe till höger och välj "Öppna i Safari/Chrome" (eller kopiera länken) och logga in där.'
       );
@@ -524,7 +500,6 @@ export default function App() {
     await signOut(auth);
   };
 
-  // 1. Loading state while Firebase Auth initializes
   if (!authReady) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#F6F4EE] px-4 text-[#112218]">
@@ -538,7 +513,6 @@ export default function App() {
     );
   }
 
-  // 2. STRICT AUTH WALL (Inloggningsvägg): Nothing can be created or viewed until signed in with Google
   if (!firebaseUser) {
     return (
       <div data-testid="auth-wall-screen" className="relative flex min-h-screen flex-col overflow-hidden bg-[#112218] text-[#F6F4EE]">
@@ -549,7 +523,7 @@ export default function App() {
           <p className="mt-6 text-xs font-semibold uppercase tracking-[0.3em] text-[#D4AF37]">Pubgolf Tour</p>
           <h1 className="mt-2 font-display text-5xl font-bold leading-[1.05]">Pubgolf Links</h1>
           <p className="mt-3 text-base text-[#F6F4EE]/70">
-            Skapa rundor, bjud in gänget och följ scoren hål för hål.
+            Bygg banor, starta rundor med gänget och följ scoren hål för hål.
           </p>
 
           {authNotice && (
@@ -575,227 +549,165 @@ export default function App() {
     );
   }
 
-  // 3. Authenticated Application (firebaseUser is guaranteed non-null below)
-  const currentUid = firebaseUser.uid;
+  // ---- Inloggad ----
+  const uid = firebaseUser.uid;
 
-  const activeCourse: PubCourse | null =
-    courses.find((c) => c.courseId === activeCourseId) || courses[0] || null;
-
-  const activeHoles: PubHole[] = activeCourse
-    ? holesByCourse[activeCourse.courseId] ||
-      createBlankHolesForCourse(activeCourse.courseId, activeCourse.ownerId)
-    : [];
-
-  const rawCourseParticipants: PlayerTourProfile[] = activeCourse
-    ? participantsByCourse[activeCourse.courseId] || []
-    : [];
-
-  // Flatten participants from all courses so any player who joined any round is included
-  const allCourseParticipantsFlat: PlayerTourProfile[] = (
-    Object.values(participantsByCourse) as PlayerTourProfile[][]
-  ).flat();
-
-  const mergedTourPlayersBase: PlayerTourProfile[] = mergeTourProfiles(
-    allProfiles,
-    allCourseParticipantsFlat,
-    myProfile,
-    activeCourse?.courseId || 'none',
-    currentUid
-  );
-
-  // Calculate automatic round-average Handicap and career stats across ALL courses for every player
-  const careerStatsByUid: Record<string, PlayerCareerStats> = {};
-  for (const player of mergedTourPlayersBase) {
-    careerStatsByUid[player.uid] = calculatePlayerCareerStats(
-      player.uid,
-      courses,
-      participantsByCourse,
-      holesByCourse
-    );
-  }
-  if (!careerStatsByUid[currentUid]) {
-    careerStatsByUid[currentUid] = calculatePlayerCareerStats(
-      currentUid,
-      courses,
-      participantsByCourse,
-      holesByCourse
-    );
-  }
-
-  const allTourPlayers: PlayerTourProfile[] = mergedTourPlayersBase.map((p) => ({
-    ...p,
-    handicap: careerStatsByUid[p.uid]?.computedHandicap || '0.0',
-  }));
-
-  const activeParticipants: PlayerTourProfile[] = mergeTourProfiles(
-    allProfiles,
-    rawCourseParticipants,
-    myProfile,
-    activeCourse?.courseId || 'none',
-    currentUid
-  ).map((p) => ({
-    ...p,
-    handicap: careerStatsByUid[p.uid]?.computedHandicap || '0.0',
-  }));
-
-  const myComputedHandicap = careerStatsByUid[currentUid]?.computedHandicap || '0.0';
-  const myRoundsPlayed = careerStatsByUid[currentUid]?.roundsPlayed || 0;
-
-  const activePlayerInRound: PlayerTourProfile | null =
-    activeParticipants.find((p) => p.uid === currentUid) ||
-    (myProfile
-      ? {
-          ...myProfile,
-          handicap: myComputedHandicap,
-          courseId: activeCourse?.courseId || 'none',
-          sips: [0, 0, 0, 0, 0, 0, 0, 0, 0],
-          totalSips: 0,
-          totalToPar: 0,
-          thruHoles: 0,
-        }
-      : null);
-
-  const persistParticipantToFirestore = async (
-    courseId: string,
-    participant: PlayerTourProfile,
-    courseHoles: PubHole[]
-  ) => {
-    if (participant.uid !== firebaseUser.uid) return;
-    const summary = calculateRoundSummary(participant.sips, courseHoles);
-    const partRef = doc(db, 'courses', courseId, 'participants', firebaseUser.uid);
-
-    try {
-      const payload: Record<string, unknown> = {
-        uid: participant.uid,
-        courseId,
-        displayName: participant.displayName.slice(0, 60),
-        nickname: participant.nickname.slice(0, 50),
-        country: participant.country.slice(0, 50),
-        homePub: participant.homePub.slice(0, 80),
-        signatureDrink: participant.signatureDrink.slice(0, 80),
-        favoriteClub: participant.favoriteClub.slice(0, 80),
-        handicap: (participant.handicap || '0.0').slice(0, 20),
-        bio: participant.bio.slice(0, 320),
-        avatarSeed: participant.avatarSeed.slice(0, 32),
-        sipsHole1: participant.sips[0] ?? 0,
-        sipsHole2: participant.sips[1] ?? 0,
-        sipsHole3: participant.sips[2] ?? 0,
-        sipsHole4: participant.sips[3] ?? 0,
-        sipsHole5: participant.sips[4] ?? 0,
-        sipsHole6: participant.sips[5] ?? 0,
-        sipsHole7: participant.sips[6] ?? 0,
-        sipsHole8: participant.sips[7] ?? 0,
-        sipsHole9: participant.sips[8] ?? 0,
-        totalSips: summary.totalSips,
-        totalToPar: summary.totalToPar,
-        thruHoles: summary.thruHoles,
-        updatedAt: serverTimestamp(),
-      };
-      if (participant.teamId) {
-        payload.teamId = participant.teamId.slice(0, 64);
-      }
-      if (participant.teamName) {
-        payload.teamName = participant.teamName.slice(0, 60);
-      }
-      await setDoc(partRef, payload);
-    } catch (error) {
-      handleFirestoreError(
-        error,
-        OperationType.WRITE,
-        `courses/${courseId}/participants/${participant.uid}`
-      );
-    }
+  /** Deltagare med senaste profilinfo och uträknat HCP. */
+  const withProfile = (p: PlayerTourProfile): PlayerTourProfile => {
+    const prof = profileByUid.get(p.uid);
+    return {
+      ...p,
+      displayName: prof?.displayName || p.displayName,
+      nickname: prof?.nickname || p.nickname,
+      country: prof?.country || p.country,
+      homePub: prof?.homePub || p.homePub,
+      signatureDrink: prof?.signatureDrink || p.signatureDrink,
+      favoriteClub: prof?.favoriteClub || p.favoriteClub,
+      bio: prof?.bio || p.bio,
+      avatarSeed: prof?.avatarSeed || p.avatarSeed,
+      playerCode: prof?.playerCode || p.playerCode,
+      handicap: careerStatsByUid[p.uid]?.computedHandicap || p.handicap,
+    };
   };
 
-  const handleSaveMyProfile = async (profileFields: {
-    displayName: string;
-    nickname: string;
-    country: string;
-    homePub: string;
-    signatureDrink: string;
-    favoriteClub: string;
-    handicap: string;
-    bio: string;
-    avatarSeed: string;
-  }) => {
-    const uid = firebaseUser.uid;
-    const autoHandicap = careerStatsByUid[uid]?.computedHandicap || '0.0';
+  const activeRound = rounds.find((r) => r.roundId === activeRoundId) || null;
+  const activeCourseDoc = activeRound ? courseById.get(activeRound.courseId) || null : null;
+  const activeRoundCourse = activeRound ? roundAsCourse(activeRound, activeCourseDoc) : null;
+  const activeHoles = activeRound ? holesByRoundId[activeRound.roundId] || [] : [];
+  const activeParticipants = activeRound
+    ? (participantsByRound[activeRound.roundId] || []).map(withProfile)
+    : [];
+  const me = activeParticipants.find((p) => p.uid === uid) || null;
+
+  const myProfileFields = withProfileDefaults({
+    displayName: myProfile?.displayName || firebaseUser.displayName || 'Spelare',
+    nickname: myProfile?.nickname || '',
+    country: myProfile?.country || '',
+    homePub: myProfile?.homePub || '',
+    signatureDrink: myProfile?.signatureDrink || '',
+    favoriteClub: myProfile?.favoriteClub || '',
+    handicap: myComputedHandicap,
+    bio: myProfile?.bio || '',
+    avatarSeed: myProfile?.avatarSeed || 'emerald',
+  });
+
+  /** Min profil som deltagarpost i en ny runda. */
+  const newParticipantFor = (profile: ReusablePlayerProfile | null, playerUid: string, roundId: string): PlayerTourProfile => ({
+    ...(profile || {
+      uid: playerUid,
+      appId: APP_ID,
+      displayName: myProfileFields.displayName,
+      nickname: myProfileFields.nickname,
+      country: '',
+      homePub: '',
+      signatureDrink: '',
+      favoriteClub: '',
+      handicap: '0.0',
+      bio: '',
+      avatarSeed: myProfileFields.avatarSeed,
+    }),
+    uid: playerUid,
+    handicap: careerStatsByUid[playerUid]?.computedHandicap || profile?.handicap || '0.0',
+    courseId: roundId,
+    sips: [...EMPTY_SIPS],
+    totalSips: 0,
+    totalToPar: 0,
+    thruHoles: 0,
+    countsForHcp: true,
+    keptResult: false,
+  });
+
+  const titleForRound = (r: PubRound) => courseById.get(r.courseId)?.title || r.courseTitle;
+  const byDateDesc = (a: PubRound, b: PubRound) => b.eventDate.localeCompare(a.eventDate);
+  const myActiveRounds = rounds.filter((r) => r.status === 'active').sort(byDateDesc);
+  const myCourses = courses.filter((c) => c.ownerId === uid).sort((a, b) => a.title.localeCompare(b.title, 'sv'));
+  const publicCourses = courses
+    .filter((c) => c.isPublic && c.ownerId !== uid)
+    .sort((a, b) => a.title.localeCompare(b.title, 'sv'));
+
+  const myHistory: ProfileHistoryEntry[] = rounds
+    .map((r) => {
+      const mine = (participantsByRound[r.roundId] || []).find((p) => p.uid === uid);
+      if (!mine) return null;
+      const summary = calculateRoundSummary(mine.sips, holesByRoundId[r.roundId] || []);
+      if (summary.thruHoles === 0) return null;
+      return {
+        courseId: r.roundId,
+        title: titleForRound(r),
+        city: r.city,
+        eventDate: r.eventDate,
+        thruHoles: summary.thruHoles,
+        totalSips: summary.totalSips,
+        totalCoursePar: summary.totalCoursePar,
+        totalToPar: summary.totalToPar,
+        toParFormatted: summary.toParFormatted,
+        countsForHcp: mine.countsForHcp !== false,
+        deleted: r.status === 'deleted',
+      };
+    })
+    .filter((x): x is ProfileHistoryEntry => x !== null)
+    .sort((a, b) => b.eventDate.localeCompare(a.eventDate));
+
+  // Rundor som ägaren raderat där jag inte har valt om resultatet ska sparas
+  const pendingDeletedRound = rounds.find((r) => {
+    if (r.status !== 'deleted') return false;
+    const mine = (participantsByRound[r.roundId] || []).find((p) => p.uid === uid);
+    return !!participantsByRound[r.roundId] && !mine?.keptResult;
+  });
+
+  const showNotice = (text: string) => {
+    setNotice(text);
+    setTimeout(() => setNotice(null), 3500);
+  };
+
+  const fail = (error: unknown, op: OperationType, path: string): never => handleFirestoreError(error, op, path);
+
+  // ---- Profil ----
+  const handleSaveMyProfile = async (fields: ProfileFieldsInput) => {
     const nextProfile: ReusablePlayerProfile = {
       uid,
       appId: APP_ID,
-      ...profileFields,
-      handicap: autoHandicap,
+      ...fields,
+      handicap: myComputedHandicap,
+      playerCode: myProfile?.playerCode,
     };
-
     setMyProfile(nextProfile);
-    setAllProfiles((prev) => {
-      const exists = prev.some((p) => p.uid === uid);
-      return exists ? prev.map((p) => (p.uid === uid ? nextProfile : p)) : [nextProfile, ...prev];
-    });
-    setSelectedPlayerUid(uid);
-
     try {
-      const profileRef = doc(db, 'profiles', uid);
-      await setDoc(profileRef, {
-        uid,
-        appId: APP_ID,
-        displayName: nextProfile.displayName.slice(0, 60),
-        nickname: nextProfile.nickname.slice(0, 50),
-        country: nextProfile.country.slice(0, 50),
-        homePub: nextProfile.homePub.slice(0, 80),
-        signatureDrink: nextProfile.signatureDrink.slice(0, 80),
-        favoriteClub: nextProfile.favoriteClub.slice(0, 80),
-        handicap: autoHandicap.slice(0, 20),
-        bio: nextProfile.bio.slice(0, 320),
-        avatarSeed: nextProfile.avatarSeed.slice(0, 32),
-        updatedAt: serverTimestamp(),
-      });
-
-      if (activeCourse) {
-        const existingSips = activePlayerInRound?.sips || [0, 0, 0, 0, 0, 0, 0, 0, 0];
-        const summary = calculateRoundSummary(existingSips, activeHoles);
-        await persistParticipantToFirestore(
-          activeCourse.courseId,
-          {
-            ...nextProfile,
-            courseId: activeCourse.courseId,
-            sips: existingSips,
-            totalSips: summary.totalSips,
-            totalToPar: summary.totalToPar,
-            thruHoles: summary.thruHoles,
-          },
-          activeHoles
-        );
+      await setDoc(doc(db, 'profiles', uid), profilePayload(nextProfile));
+      // Uppdatera namn/avatar i pågående rundor
+      for (const r of myActiveRounds) {
+        if (!(participantsByRound[r.roundId] || []).some((p) => p.uid === uid)) continue;
+        await updateDoc(participantRef(r.roundId, uid), {
+          displayName: nextProfile.displayName.slice(0, 60),
+          nickname: nextProfile.nickname.slice(0, 50),
+          avatarSeed: nextProfile.avatarSeed.slice(0, 32),
+          updatedAt: serverTimestamp(),
+        });
       }
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `profiles/${uid}`);
+      fail(error, OperationType.WRITE, `profiles/${uid}`);
     }
   };
 
-  const handleCreateCourse = async (input: CreateRoundInput): Promise<PubCourse> => {
-    const uid = firebaseUser.uid;
+  // ---- Banor ----
+  const handleCreateCourse = async (input: CreateCourseInput): Promise<string> => {
     const ownerName = myProfile?.displayName || firebaseUser.displayName || 'Banarkitekt';
-    const courseId = `round-${Date.now()}`;
-    const inviteCode = generateInviteCode();
-    const gameMode: PubGolfGameMode = input.gameMode === 'brutal' ? 'brutal' : 'single';
-
-    const newCourse: PubCourse = {
+    const courseId = `course-${Date.now()}`;
+    const course: PubCourse = {
       courseId,
       appId: APP_ID,
-      inviteCode,
+      inviteCode: generateInviteCode(),
       title: input.title,
       subtitle: input.subtitle,
       city: input.city,
-      eventDate: input.eventDate,
+      eventDate: new Date().toISOString().slice(0, 10),
       ownerId: uid,
       ownerName,
-      gameMode,
+      gameMode: 'single',
       isPublic: input.isPublic,
     };
-
-    const text = (v: string, fallback: string, max: number) =>
-      v.trim().length >= 2 ? v.trim().slice(0, max) : fallback;
-    const blankHoles = createBlankHolesForCourse(courseId, uid).map((hole) => {
+    const text = (v: string, fallback: string, max: number) => (v.trim().length >= 2 ? v.trim().slice(0, max) : fallback);
+    const holes = createBlankHolesForCourse(courseId, uid).map((hole) => {
       const draft = input.holes.find((d) => d.holeNumber === hole.holeNumber);
       if (!draft) return hole;
       const hasRule = draft.hazardTitle.trim().length >= 2 || draft.hazardRule.trim().length >= 2;
@@ -812,503 +724,326 @@ export default function App() {
         caddieTip: 'Lycka till – och drick vatten mellan hålen!',
       };
     });
-    const initialParticipant: PlayerTourProfile = {
-      ...(myProfile || {
-        uid,
-        appId: APP_ID,
-        displayName: ownerName,
-        nickname: 'Capitano',
-        country: input.city,
-        homePub: 'Första Tee',
-        signatureDrink: 'Lager',
-        favoriteClub: 'Driver',
-        handicap: myComputedHandicap,
-        bio: 'Banarkitekt för rundan.',
-        avatarSeed: 'emerald',
-      }),
-      handicap: myComputedHandicap,
-      uid,
-      courseId,
-      sips: [0, 0, 0, 0, 0, 0, 0, 0, 0],
-      totalSips: 0,
-      totalToPar: 0,
-      thruHoles: 0,
-    };
-
-    setCourses((prev) => [newCourse, ...prev]);
-    setHolesByCourse((prev) => ({ ...prev, [courseId]: blankHoles }));
-    setParticipantsByCourse((prev) => ({ ...prev, [courseId]: [initialParticipant] }));
-    setActiveCourseId(courseId);
-    setSelectedHoleNum(1);
 
     try {
-      const courseRef = doc(db, 'courses', courseId);
-      await setDoc(courseRef, {
-        courseId,
-        appId: APP_ID,
-        inviteCode,
-        title: newCourse.title.slice(0, 80),
-        subtitle: newCourse.subtitle.slice(0, 140),
-        city: newCourse.city.slice(0, 60),
-        eventDate: newCourse.eventDate.slice(0, 40),
-        ownerId: uid,
-        ownerName: newCourse.ownerName.slice(0, 80),
-        gameMode,
-        isPublic: input.isPublic,
-        updatedAt: serverTimestamp(),
-      });
-
-      for (const h of blankHoles) {
-        const hRef = doc(db, 'courses', courseId, 'holes', `hole-${h.holeNumber}`);
-        await setDoc(hRef, {
-          ...h,
-          ownerId: uid,
-          updatedAt: serverTimestamp(),
-        });
-      }
-
-      await persistParticipantToFirestore(courseId, initialParticipant, blankHoles);
+      await setDoc(doc(db, 'courses', courseId), coursePayload(course));
+      const batch = writeBatch(db);
+      for (const h of holes) batch.set(doc(db, 'courses', courseId, 'holes', `hole-${h.holeNumber}`), holePayload(h, courseId, uid));
+      await batch.commit();
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, `courses/${courseId}`);
+      fail(error, OperationType.CREATE, `courses/${courseId}`);
     }
-
-    return newCourse;
+    setCourses((prev) => (prev.some((c) => c.courseId === courseId) ? prev : [course, ...prev]));
+    setHolesByCourse((prev) => ({ ...prev, [courseId]: holes }));
+    return courseId;
   };
 
-  const handleJoinByCode = async (
-    codeOrId: string
-  ): Promise<{ ok: boolean; message: string; courseId?: string }> => {
-    const normalized = codeOrId.trim().toUpperCase();
-    let matchedCourse =
-      courses.find(
-        (c) => c.inviteCode.toUpperCase() === normalized || c.courseId.toUpperCase() === normalized
-      ) || null;
-
-    if (!matchedCourse) {
-      try {
-        const q = query(
-          collection(db, 'courses'),
-          where('appId', '==', APP_ID),
-          where('inviteCode', '==', normalized)
-        );
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-          const d = snap.docs[0].data();
-          matchedCourse = {
-            courseId: String(d.courseId),
-            appId: String(d.appId || APP_ID),
-            inviteCode: String(d.inviteCode),
-            title: String(d.title),
-            subtitle: String(d.subtitle),
-            city: String(d.city),
-            eventDate: String(d.eventDate),
-            ownerId: String(d.ownerId),
-            ownerName: String(d.ownerName),
-            gameMode: d.gameMode === 'brutal' ? 'brutal' : 'single',
-            isPublic: d.isPublic === true,
-          };
-        }
-      } catch (error) {
-        handleFirestoreError(error, OperationType.LIST, 'courses');
-      }
-    }
-
-    if (!matchedCourse) {
-      return {
-        ok: false,
-        message: `Hittade ingen runda med inbjudningskod "${normalized}". Kontrollera koden med banarkitekten.`,
-      };
-    }
-
-    const uid = firebaseUser.uid;
-    const cId = matchedCourse.courseId;
-    const cHoles =
-      holesByCourse[cId] || createBlankHolesForCourse(cId, matchedCourse.ownerId);
-
-    const existingList = participantsByCourse[cId] || [];
-    const alreadyIn = existingList.find((p) => p.uid === uid);
-
-    const participantRecord: PlayerTourProfile = alreadyIn || {
-      ...(myProfile || {
-        uid,
-        appId: APP_ID,
-        displayName: firebaseUser.displayName || 'Spelare',
-        nickname: 'Tour Pro',
-        country: matchedCourse.city,
-        homePub: 'Klubbhuset',
-        signatureDrink: 'Lager',
-        favoriteClub: 'Driver',
-        handicap: myComputedHandicap,
-        bio: 'Ansluten till rundan.',
-        avatarSeed: 'emerald',
-      }),
-      handicap: myComputedHandicap,
-      uid,
-      courseId: cId,
-      sips: [0, 0, 0, 0, 0, 0, 0, 0, 0],
-      totalSips: 0,
-      totalToPar: 0,
-      thruHoles: 0,
-    };
-
-    setActiveCourseId(cId);
-    await persistParticipantToFirestore(cId, participantRecord, cHoles);
-
-    return {
-      ok: true,
-      courseId: cId,
-      message: `Du är nu ansluten till "${matchedCourse.title}"!`,
-    };
-  };
-
-  const handleDeleteCourse = async (courseId: string) => {
+  const handleSaveCourseMeta = async (updated: PubCourse) => {
+    if (updated.ownerId !== uid) return;
+    setCourses((prev) => prev.map((c) => (c.courseId === updated.courseId ? updated : c)));
     try {
-      await deleteDoc(doc(db, 'courses', courseId));
-      setCourses((prev) => prev.filter((c) => c.courseId !== courseId));
-      if (activeCourseId === courseId) {
-        const remaining = courses.filter((c) => c.courseId !== courseId);
-        setActiveCourseId(remaining[0]?.courseId || null);
-      }
+      await setDoc(doc(db, 'courses', updated.courseId), coursePayload(updated));
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `courses/${courseId}`);
+      fail(error, OperationType.WRITE, `courses/${updated.courseId}`);
     }
-  };
-
-  const triggerHoleCelebrationClip = (
-    player: PlayerTourProfile,
-    holeNumber: number,
-    sipsCount: number
-  ) => {
-    if (sipsCount <= 0) return;
-    const holeObj =
-      activeHoles.find((h) => h.holeNumber === holeNumber) || {
-        holeNumber,
-        pubName: `Hål ${holeNumber}`,
-        drinkName: player.signatureDrink || 'Tävlingsdryck',
-        par: 4,
-      };
-    const clip = buildScoreCelebrationClip({
-      playerUid: player.uid,
-      playerName: player.displayName,
-      playerNickname: player.nickname,
-      avatarSeed: player.avatarSeed,
-      holeNumber,
-      pubName: holeObj.pubName,
-      drinkName: holeObj.drinkName,
-      sips: sipsCount,
-      par: holeObj.par,
-    });
-    setActiveCelebrationClip(clip);
-  };
-
-  const handleUpdateHoleSips = (holeNumber: number, newSips: number) => {
-    if (!activeCourse || !activePlayerInRound) return;
-    const cId = activeCourse.courseId;
-
-    const nextSips = [...activePlayerInRound.sips];
-    nextSips[holeNumber - 1] = newSips;
-    const summary = calculateRoundSummary(nextSips, activeHoles);
-
-    // Record in prevSipsByCourseRef immediately so the local user gets instant animation without duplicate firing when Firestore echoes back
-    if (!prevSipsByCourseRef.current[cId]) {
-      prevSipsByCourseRef.current[cId] = {};
-    }
-    prevSipsByCourseRef.current[cId][activePlayerInRound.uid] = [...nextSips];
-
-    if (newSips > 0) {
-      triggerHoleCelebrationClip(activePlayerInRound, holeNumber, newSips);
-    }
-
-    const draftPlayer: PlayerTourProfile = {
-      ...activePlayerInRound,
-      sips: nextSips,
-      totalSips: summary.totalSips,
-      totalToPar: summary.totalToPar,
-      thruHoles: summary.thruHoles,
-    };
-
-    const nextPartsByCourse: Record<string, PlayerTourProfile[]> = {
-      ...participantsByCourse,
-      [cId]: (participantsByCourse[cId] || []).some((p) => p.uid === draftPlayer.uid)
-        ? (participantsByCourse[cId] || []).map((p) =>
-            p.uid === draftPlayer.uid ? draftPlayer : p
-          )
-        : [...(participantsByCourse[cId] || []), draftPlayer],
-    };
-
-    const nextCareer = calculatePlayerCareerStats(
-      draftPlayer.uid,
-      courses,
-      nextPartsByCourse,
-      holesByCourse
-    );
-
-    const updatedPlayer: PlayerTourProfile = {
-      ...draftPlayer,
-      handicap: nextCareer.computedHandicap,
-    };
-
-    setParticipantsByCourse(nextPartsByCourse);
-    void persistParticipantToFirestore(cId, updatedPlayer, activeHoles);
   };
 
   const handleSaveHoleConfig = async (updatedHole: PubHole) => {
-    if (!activeCourse || activeCourse.ownerId !== firebaseUser.uid) return;
-    const cId = activeCourse.courseId;
-
-    setHolesByCourse((prev) => {
-      const currentList =
-        prev[cId] || createBlankHolesForCourse(cId, activeCourse.ownerId);
-      return {
-        ...prev,
-        [cId]: currentList.map((h) =>
-          h.holeNumber === updatedHole.holeNumber ? updatedHole : h
-        ),
-      };
-    });
-
+    if (!activeCourseDoc || activeCourseDoc.ownerId !== uid) return;
+    const cId = activeCourseDoc.courseId;
+    setHolesByCourse((prev) => ({
+      ...prev,
+      [cId]: (prev[cId] || createBlankHolesForCourse(cId, uid)).map((h) =>
+        h.holeNumber === updatedHole.holeNumber ? updatedHole : h
+      ),
+    }));
     try {
-      const holeRef = doc(
-        db,
-        'courses',
-        cId,
-        'holes',
-        `hole-${updatedHole.holeNumber}`
-      );
-      await setDoc(holeRef, {
-        holeNumber: updatedHole.holeNumber,
-        courseId: cId,
-        ownerId: firebaseUser.uid,
-        pubName: updatedHole.pubName.slice(0, 80),
-        pubAddress: updatedHole.pubAddress.slice(0, 120),
-        drinkName: updatedHole.drinkName.slice(0, 80),
-        drinkType: updatedHole.drinkType,
-        volumeCl: updatedHole.volumeCl,
-        par: updatedHole.par,
-        lengthMeters: updatedHole.lengthMeters,
-        shape: updatedHole.shape,
-        hazardTitle: updatedHole.hazardTitle.slice(0, 80),
-        hazardRule: updatedHole.hazardRule.slice(0, 180),
-        caddieTip: updatedHole.caddieTip.slice(0, 200),
-        updatedAt: serverTimestamp(),
-      });
+      await setDoc(doc(db, 'courses', cId, 'holes', `hole-${updatedHole.holeNumber}`), holePayload(updatedHole, cId, uid));
     } catch (error) {
-      handleFirestoreError(
-        error,
-        OperationType.WRITE,
-        `courses/${cId}/holes/hole-${updatedHole.holeNumber}`
-      );
+      fail(error, OperationType.WRITE, `courses/${cId}/holes/hole-${updatedHole.holeNumber}`);
     }
   };
 
-  const handleSaveCourseMeta = async (updatedCourse: PubCourse) => {
-    if (updatedCourse.ownerId !== firebaseUser.uid) return;
-    const gameMode: PubGolfGameMode = updatedCourse.gameMode === 'brutal' ? 'brutal' : 'single';
-    const normalizedCourse: PubCourse = {
-      ...updatedCourse,
-      gameMode,
+  // ---- Rundor ----
+  const handleStartRound = async (courseId: string, input: StartRoundInput): Promise<string> => {
+    const course = courseById.get(courseId);
+    if (!course) throw new Error('Banan hittades inte.');
+    let roundId = generateRoundCode();
+    for (let i = 0; i < 5; i++) {
+      const taken = await getDoc(roundRef(roundId));
+      if (!taken.exists()) break;
+      roundId = generateRoundCode();
+    }
+    const round: PubRound = {
+      roundId,
+      appId: APP_ID,
+      courseId,
+      courseTitle: course.title,
+      city: course.city,
+      eventDate: input.eventDate,
+      ownerId: uid,
+      ownerName: myProfileFields.displayName,
+      gameMode: input.gameMode,
+      memberIds: [uid],
+      locked: false,
+      status: 'active',
     };
-
-    setCourses((prev) =>
-      prev.map((c) => (c.courseId === normalizedCourse.courseId ? normalizedCourse : c))
-    );
-
+    const holes = holesForCourse(courseId, course.ownerId);
     try {
-      const courseRef = doc(db, 'courses', normalizedCourse.courseId);
-      await setDoc(courseRef, {
-        courseId: normalizedCourse.courseId,
-        appId: APP_ID,
-        inviteCode: normalizedCourse.inviteCode,
-        title: normalizedCourse.title.slice(0, 80),
-        subtitle: normalizedCourse.subtitle.slice(0, 140),
-        city: normalizedCourse.city.slice(0, 60),
-        eventDate: normalizedCourse.eventDate.slice(0, 40),
-        ownerId: firebaseUser.uid,
-        ownerName: normalizedCourse.ownerName.slice(0, 80),
-        gameMode,
-        isPublic: !!normalizedCourse.isPublic,
-        updatedAt: serverTimestamp(),
-      });
+      const batch = writeBatch(db);
+      batch.set(roundRef(roundId), roundPayload(round));
+      batch.set(participantRef(roundId, uid), roundParticipantPayload(newParticipantFor(myProfile, uid, roundId), roundId, holes));
+      await batch.commit();
     } catch (error) {
-      handleFirestoreError(
-        error,
-        OperationType.WRITE,
-        `courses/${normalizedCourse.courseId}`
+      fail(error, OperationType.CREATE, `rounds/${roundId}`);
+    }
+    return roundId;
+  };
+
+  const handleJoinByCode = async (raw: string): Promise<{ ok: boolean; message: string; roundId?: string }> => {
+    const code = raw.trim().toUpperCase().replace(/\s/g, '');
+    const withPrefix = code.startsWith('PG-') ? code : code.startsWith('PG') ? `PG-${code.slice(2)}` : `PG-${code}`;
+    if (!ROUND_CODE_PATTERN.test(withPrefix)) {
+      return { ok: false, message: 'Koden ser inte rätt ut. Den ska se ut som PG-XXXXXX.' };
+    }
+    if (rounds.some((r) => r.roundId === withPrefix)) {
+      return { ok: true, message: 'Du är redan med.', roundId: withPrefix };
+    }
+    let round: PubRound;
+    try {
+      const snap = await getDoc(roundRef(withPrefix));
+      if (!snap.exists()) {
+        return { ok: false, message: `Hittade ingen runda med koden ${withPrefix}. Kolla koden med den som startade rundan.` };
+      }
+      round = parseRound(snap.data());
+    } catch {
+      return { ok: false, message: 'Kunde inte hämta rundan just nu. Försök igen.' };
+    }
+    if (round.status === 'deleted') return { ok: false, message: 'Rundan är raderad av ägaren.' };
+    if (round.locked) return { ok: false, message: 'Rundan är låst – be ägaren låsa upp den eller lägga till dig.' };
+    const holes = holesForCourse(round.courseId, courseById.get(round.courseId)?.ownerId || round.ownerId);
+    try {
+      const batch = writeBatch(db);
+      batch.update(roundRef(round.roundId), { memberIds: arrayUnion(uid), updatedAt: serverTimestamp() });
+      batch.set(
+        participantRef(round.roundId, uid),
+        roundParticipantPayload(newParticipantFor(myProfile, uid, round.roundId), round.roundId, holes)
       );
+      await batch.commit();
+    } catch (error) {
+      console.error('Kunde inte gå med', error);
+      return { ok: false, message: 'Kunde inte gå med i rundan. Den kan ha låsts precis – fråga ägaren.' };
+    }
+    // Visa rundan direkt, innan lyssnaren hunnit uppdatera
+    setRounds((prev) =>
+      prev.some((r) => r.roundId === round.roundId) ? prev : [...prev, { ...round, memberIds: [...round.memberIds, uid] }]
+    );
+    return { ok: true, message: `Du är med i ${round.courseTitle}!`, roundId: round.roundId };
+  };
+
+  const leaveRound = async (roundId: string) => {
+    try {
+      const batch = writeBatch(db);
+      batch.delete(participantRef(roundId, uid));
+      batch.update(roundRef(roundId), { memberIds: arrayRemove(uid), updatedAt: serverTimestamp() });
+      await batch.commit();
+    } catch (error) {
+      fail(error, OperationType.WRITE, `rounds/${roundId}`);
+    }
+    setRounds((prev) => prev.filter((r) => r.roundId !== roundId));
+    if (activeRoundId === roundId) {
+      setActiveRoundId(null);
+      setView('play');
     }
   };
 
-  const handleAssignBrutalBallTeam = async (
-    playerUids: string[],
-    teamId: string,
-    teamName: string
-  ) => {
-    if (!activeCourse) return;
-    const cId = activeCourse.courseId;
-    const isCourseOwner = activeCourse.ownerId === firebaseUser.uid;
+  const updateRound = async (roundId: string, patch: Record<string, unknown>) => {
+    try {
+      await updateDoc(roundRef(roundId), { ...patch, updatedAt: serverTimestamp() });
+    } catch (error) {
+      fail(error, OperationType.UPDATE, `rounds/${roundId}`);
+    }
+  };
 
-    // Update local state immediately
-    setParticipantsByCourse((prev) => {
-      const list = prev[cId] || [];
-      return {
-        ...prev,
-        [cId]: list.map((p) =>
-          playerUids.includes(p.uid)
-            ? { ...p, teamId: teamId.slice(0, 64), teamName: teamName.slice(0, 60) }
-            : p
-        ),
-      };
-    });
+  const handleAddPlayer = async (roundId: string, rawCode: string): Promise<{ ok: boolean; message: string }> => {
+    const code = normalizePlayerCode(rawCode);
+    let profile = allProfiles.find((p) => p.playerCode === code) || null;
+    if (!profile) {
+      const snap = await getDocs(
+        query(collection(db, 'profiles'), where('appId', '==', APP_ID), where('playerCode', '==', code))
+      );
+      profile = snap.empty ? null : parseProfile(snap.docs[0].data());
+    }
+    if (!profile) return { ok: false, message: `Ingen spelare har ID ${code}.` };
+    const round = rounds.find((r) => r.roundId === roundId);
+    if (!round) return { ok: false, message: 'Rundan hittades inte.' };
+    if (round.memberIds.includes(profile.uid)) return { ok: false, message: `${profile.displayName} är redan med.` };
+    try {
+      const batch = writeBatch(db);
+      batch.update(roundRef(roundId), { memberIds: arrayUnion(profile.uid), updatedAt: serverTimestamp() });
+      batch.set(
+        participantRef(roundId, profile.uid),
+        roundParticipantPayload(newParticipantFor(profile, profile.uid, roundId), roundId, holesByRoundId[roundId] || [])
+      );
+      await batch.commit();
+    } catch (error) {
+      console.error('Kunde inte lägga till spelare', error);
+      return { ok: false, message: 'Kunde inte lägga till spelaren. Försök igen.' };
+    }
+    return { ok: true, message: `${profile.displayName} är tillagd!` };
+  };
 
-    // Persist to Firestore (course owner can update any participant in the round; regular player can update their own participant doc)
-    for (const targetUid of playerUids) {
-      if (!isCourseOwner && targetUid !== firebaseUser.uid) continue;
-      const targetPlayer = activeParticipants.find((p) => p.uid === targetUid);
-      if (!targetPlayer) continue;
-      const summary = calculateRoundSummary(targetPlayer.sips, activeHoles);
-      const partRef = doc(db, 'courses', cId, 'participants', targetUid);
+  const handleRemovePlayer = async (roundId: string, playerUid: string) => {
+    try {
+      const batch = writeBatch(db);
+      batch.delete(participantRef(roundId, playerUid));
+      batch.update(roundRef(roundId), { memberIds: arrayRemove(playerUid), updatedAt: serverTimestamp() });
+      await batch.commit();
+    } catch (error) {
+      fail(error, OperationType.WRITE, `rounds/${roundId}/participants/${playerUid}`);
+    }
+  };
+
+  const handleDeleteForAll = async (roundId: string, keepMine: boolean) => {
+    try {
+      const batch = writeBatch(db);
+      if (keepMine) {
+        batch.update(roundRef(roundId), { status: 'deleted', locked: true, updatedAt: serverTimestamp() });
+        batch.update(participantRef(roundId, uid), { keptResult: true, updatedAt: serverTimestamp() });
+      } else {
+        batch.update(roundRef(roundId), {
+          status: 'deleted',
+          locked: true,
+          memberIds: arrayRemove(uid),
+          updatedAt: serverTimestamp(),
+        });
+        batch.delete(participantRef(roundId, uid));
+      }
+      await batch.commit();
+    } catch (error) {
+      fail(error, OperationType.WRITE, `rounds/${roundId}`);
+    }
+    if (!keepMine) setRounds((prev) => prev.filter((r) => r.roundId !== roundId));
+    setActiveRoundId(null);
+    setView('play');
+    showNotice('Rundan är raderad för alla.');
+  };
+
+  const handleSetCountsForHcp = async (roundId: string, counts: boolean) => {
+    setParticipantsByRound((prev) => ({
+      ...prev,
+      [roundId]: (prev[roundId] || []).map((p) => (p.uid === uid ? { ...p, countsForHcp: counts } : p)),
+    }));
+    try {
+      await updateDoc(participantRef(roundId, uid), { countsForHcp: counts, updatedAt: serverTimestamp() });
+    } catch (error) {
+      fail(error, OperationType.UPDATE, `rounds/${roundId}/participants/${uid}`);
+    }
+  };
+
+  const resolveDeletedRound = async (roundId: string, keep: boolean) => {
+    setDeletedPromptBusy(true);
+    try {
+      const hasMine = (participantsByRound[roundId] || []).some((p) => p.uid === uid);
+      if (keep && hasMine) {
+        await updateDoc(participantRef(roundId, uid), { keptResult: true, updatedAt: serverTimestamp() });
+      } else if (hasMine) {
+        await leaveRound(roundId);
+      } else {
+        await updateDoc(roundRef(roundId), { memberIds: arrayRemove(uid), updatedAt: serverTimestamp() });
+        setRounds((prev) => prev.filter((r) => r.roundId !== roundId));
+      }
+    } catch (error) {
+      console.error(error);
+      showNotice('Något gick fel. Försök igen.');
+    } finally {
+      setDeletedPromptBusy(false);
+    }
+  };
+
+  // ---- Score ----
+  const handleUpdateHoleSips = (holeNumber: number, newSips: number) => {
+    if (!activeRound || !me || activeRound.status !== 'active') return;
+    const rId = activeRound.roundId;
+    const nextSips = [...me.sips];
+    nextSips[holeNumber - 1] = newSips;
+    const summary = calculateRoundSummary(nextSips, activeHoles);
+
+    // Spara direkt lokalt så firandet inte visas två gånger när Firestore ekar tillbaka
+    prevSipsByRoundRef.current[rId] = { ...(prevSipsByRoundRef.current[rId] || {}), [uid]: [...nextSips] };
+    if (newSips > 0) {
+      const hole = activeHoles.find((h) => h.holeNumber === holeNumber);
+      setActiveCelebrationClip(
+        buildScoreCelebrationClip({
+          playerUid: me.uid,
+          playerName: me.displayName,
+          playerNickname: me.nickname,
+          avatarSeed: me.avatarSeed,
+          holeNumber,
+          pubName: hole?.pubName || `Hål ${holeNumber}`,
+          drinkName: hole?.drinkName || 'Tävlingsdryck',
+          sips: newSips,
+          par: hole?.par || 4,
+        })
+      );
+    }
+
+    const totals = { totalSips: summary.totalSips, totalToPar: summary.totalToPar, thruHoles: summary.thruHoles };
+    const updated: PlayerTourProfile = { ...me, sips: nextSips, ...totals };
+    setParticipantsByRound((prev) => ({
+      ...prev,
+      [rId]: (prev[rId] || []).map((p) => (p.uid === uid ? { ...p, sips: nextSips, ...totals } : p)),
+    }));
+    void setDoc(participantRef(rId, uid), roundParticipantPayload(updated, rId, activeHoles)).catch((error) =>
+      reportFirestoreError(error, OperationType.WRITE, `rounds/${rId}/participants/${uid}`)
+    );
+  };
+
+  const handleAssignTeam = async (playerUids: string[], teamId: string, teamName: string) => {
+    if (!activeRound) return;
+    const rId = activeRound.roundId;
+    const isRoundOwner = activeRound.ownerId === uid;
+    setParticipantsByRound((prev) => ({
+      ...prev,
+      [rId]: (prev[rId] || []).map((p) =>
+        playerUids.includes(p.uid) ? { ...p, teamId: teamId.slice(0, 64), teamName: teamName.slice(0, 60) } : p
+      ),
+    }));
+    for (const target of playerUids) {
+      if (!isRoundOwner && target !== uid) continue;
       try {
-        await setDoc(partRef, {
-          uid: targetUid,
-          courseId: cId,
-          displayName: targetPlayer.displayName.slice(0, 60),
-          nickname: targetPlayer.nickname.slice(0, 50),
-          country: targetPlayer.country.slice(0, 50),
-          homePub: targetPlayer.homePub.slice(0, 80),
-          signatureDrink: targetPlayer.signatureDrink.slice(0, 80),
-          favoriteClub: targetPlayer.favoriteClub.slice(0, 80),
-          handicap: (targetPlayer.handicap || '0.0').slice(0, 20),
-          bio: targetPlayer.bio.slice(0, 320),
-          avatarSeed: targetPlayer.avatarSeed.slice(0, 32),
-          sipsHole1: targetPlayer.sips[0] ?? 0,
-          sipsHole2: targetPlayer.sips[1] ?? 0,
-          sipsHole3: targetPlayer.sips[2] ?? 0,
-          sipsHole4: targetPlayer.sips[3] ?? 0,
-          sipsHole5: targetPlayer.sips[4] ?? 0,
-          sipsHole6: targetPlayer.sips[5] ?? 0,
-          sipsHole7: targetPlayer.sips[6] ?? 0,
-          sipsHole8: targetPlayer.sips[7] ?? 0,
-          sipsHole9: targetPlayer.sips[8] ?? 0,
-          totalSips: summary.totalSips,
-          totalToPar: summary.totalToPar,
-          thruHoles: summary.thruHoles,
+        await updateDoc(participantRef(rId, target), {
           teamId: teamId.slice(0, 64),
           teamName: teamName.slice(0, 60),
           updatedAt: serverTimestamp(),
         });
       } catch (error) {
-        handleFirestoreError(
-          error,
-          OperationType.WRITE,
-          `courses/${cId}/participants/${targetUid}`
-        );
+        fail(error, OperationType.UPDATE, `rounds/${rId}/participants/${target}`);
       }
     }
   };
 
-  const renderRoundSwitcherBar = () => {
-    if (courses.length <= 1 || !activeCourse) return null;
-    return (
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#112218]/15 bg-white px-5 py-3 shadow-xs">
-        <div className="text-xs font-bold text-[#112218]/70">
-          VÄLJ AKTIV RUNDA ({courses.length} RUNDOR):
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {courses.map((c) => {
-            const isActive = c.courseId === activeCourse.courseId;
-            return (
-              <button
-                key={c.courseId}
-                type="button"
-                onClick={() => {
-                  setActiveCourseId(c.courseId);
-                  setSelectedHoleNum(1);
-                }}
-                className={`rounded-xl px-3.5 py-1.5 text-xs font-semibold transition-colors ${
-                  isActive
-                    ? 'bg-[#112218] text-[#F6F4EE]'
-                    : 'border border-[#112218]/15 bg-[#F6F4EE] text-[#112218] hover:bg-[#112218]/10'
-                }`}
-              >
-                {c.title} ({c.eventDate})
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    );
-  };
-
-  const renderNoActiveRoundPrompt = (featureTitle: string) => (
-    <div
-      data-testid="no-active-round-prompt"
-      className="rounded-2xl border border-[#112218]/15 bg-white p-10 text-center shadow-xs"
-    >
-      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[#112218] text-[#D4AF37]">
-        <Flag className="h-6 w-6" />
-      </div>
-      <h2 className="mt-4 font-display text-2xl font-bold text-[#112218]">
-        Ingen aktiv pubgolfrunda vald för {featureTitle}
-      </h2>
-      <p className="mx-auto mt-2 max-w-md text-sm text-[#112218]/70">
-        Skapa en ny pubgolfrunda eller anslut till en väns runda med inbjudningskod i lobbyn för att
-        aktivera scorekortet, banguiden och leaderboarden.
-      </p>
-      <button
-        type="button"
-        onClick={() => setActiveTab('lobby')}
-        className="mt-6 inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-[#112218] px-5 py-2.5 text-xs font-semibold text-[#F6F4EE] transition-colors hover:bg-[#163826]"
-      >
-        <PlusCircle className="h-4 w-4 text-[#D4AF37]" />
-        Gå till Rundor & Inbjudan
-      </button>
-    </div>
-  );
-
-  const myProfileFields = withProfileDefaults({
-    displayName: myProfile?.displayName || firebaseUser.displayName || 'Spelare',
-    nickname: myProfile?.nickname || '',
-    country: myProfile?.country || '',
-    homePub: myProfile?.homePub || '',
-    signatureDrink: myProfile?.signatureDrink || '',
-    favoriteClub: myProfile?.favoriteClub || '',
-    handicap: myComputedHandicap,
-    bio: myProfile?.bio || '',
-    avatarSeed: myProfile?.avatarSeed || 'emerald',
-  });
-
-  const isMember = (cId: string) => (participantsByCourse[cId] || []).some((p) => p.uid === currentUid);
-  const sortByDate = (a: PubCourse, b: PubCourse) => b.eventDate.localeCompare(a.eventDate);
-  const myRounds = courses.filter((c) => isMember(c.courseId) || c.ownerId === currentUid).sort(sortByDate);
-  const publicRounds = courses
-    .filter((c) => c.isPublic && !isMember(c.courseId) && c.ownerId !== currentUid)
-    .sort(sortByDate);
-  const playerCountByCourse: Record<string, number> = {};
-  for (const c of courses) playerCountByCourse[c.courseId] = (participantsByCourse[c.courseId] || []).length;
-
-  const openRound = (cId: string) => {
-    setActiveCourseId(cId);
-    const me = (participantsByCourse[cId] || []).find((p) => p.uid === currentUid);
-    const firstOpen = me ? me.sips.findIndex((s) => !s) : 0;
+  const openRound = (roundId: string) => {
+    setActiveRoundId(roundId);
+    const mine = (participantsByRound[roundId] || []).find((p) => p.uid === uid);
+    const firstOpen = mine ? mine.sips.findIndex((s) => !s) : 0;
     setSelectedHoleNum(firstOpen >= 0 ? firstOpen + 1 : 1);
     setView('round');
   };
 
-  const createAndOpen = async (input: CreateRoundInput) => {
-    const created = await handleCreateCourse(input);
-    setActiveCourseId(created.courseId);
-    setSelectedHoleNum(1);
-    setView('round');
+  const openStart = (courseId: string) => {
+    setStartCourseId(courseId);
+    setView('start');
   };
 
+  const startCourse = startCourseId ? courseById.get(startCourseId) || null : null;
   const firstName = (myProfileFields.displayName || 'golfare').split(' ')[0];
+  const myPlayerCode = myProfile?.playerCode || '';
+  const tourPlayers: PlayerTourProfile[] = mergeTourProfiles(allProfiles, [], myProfile, 'none', uid).map(withProfile);
+  const myTourPlayer = tourPlayers.find((p) => p.uid === uid) || null;
 
   return (
-    <APIProvider
-      apiKey={import.meta.env.VITE_GOOGLE_MAPS_API_KEY || ''}
-      language="sv"
-      region="SE"
-    >
+    <APIProvider apiKey={import.meta.env.VITE_GOOGLE_MAPS_API_KEY || ''} language="sv" region="SE">
       <div className="min-h-screen bg-[#F6F4EE] text-[#112218]">
         {syncError && (
           <div className="sticky top-0 z-50 flex items-center justify-center gap-3 border-b border-red-200 bg-red-50 px-4 py-2.5 text-center text-xs text-red-900 shadow-sm md:text-sm">
@@ -1331,23 +1066,55 @@ export default function App() {
           onGoHome={() => setView('home')}
           onOpenMyProfile={() => setView('profile')}
           onOpenPlayers={() => {
-            setSelectedPlayerUid(currentUid);
+            setSelectedPlayerUid(uid);
             setView('players');
           }}
           onOpenAbout={() => setView('about')}
           onSignOut={handleGoogleSignOut}
         />
 
-        <BowlingScoreAnimationOverlay
-          clip={activeCelebrationClip}
-          onDismiss={() => setActiveCelebrationClip(null)}
-        />
+        {activeCelebrationClip && (
+          <Suspense fallback={null}>
+            <BowlingScoreAnimationOverlay clip={activeCelebrationClip} onDismiss={() => setActiveCelebrationClip(null)} />
+          </Suspense>
+        )}
+
+        {notice && (
+          <div className="fixed inset-x-0 top-16 z-40 mx-auto w-fit rounded-full bg-[#112218] px-4 py-2 text-sm font-semibold text-[#F6F4EE] shadow-lg">
+            {notice}
+          </div>
+        )}
+
+        {pendingDeletedRound && (
+          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4 sm:items-center">
+            <div className="w-full max-w-sm rounded-3xl bg-white p-5 shadow-2xl">
+              <p className="text-xs font-semibold uppercase tracking-[0.15em] text-red-700">Rundan är raderad</p>
+              <h2 className="mt-1 font-display text-xl font-bold text-[#112218]">{titleForRound(pendingDeletedRound)}</h2>
+              <p className="mt-2 text-sm text-[#112218]/70">
+                {pendingDeletedRound.ownerName} har raderat rundan. Vill du spara ditt eget resultat i din historik?
+              </p>
+              <div className="mt-4 grid gap-2">
+                <button type="button" disabled={deletedPromptBusy}
+                  onClick={() => void resolveDeletedRound(pendingDeletedRound.roundId, true)}
+                  className="rounded-2xl bg-[#112218] py-3 text-sm font-bold text-[#F6F4EE] disabled:opacity-60">
+                  Spara mitt resultat
+                </button>
+                <button type="button" disabled={deletedPromptBusy}
+                  onClick={() => void resolveDeletedRound(pendingDeletedRound.roundId, false)}
+                  className="rounded-2xl border border-red-200 py-3 text-sm font-semibold text-red-700 disabled:opacity-60">
+                  Radera mitt resultat
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <main id="top" className={`mx-auto px-4 pt-5 pb-10 ${view === 'players' ? 'max-w-6xl' : 'max-w-3xl'}`}>
           {view === 'home' && (
             <HomeView
               firstName={firstName}
-              myOpenRounds={myRounds}
+              myOpenRounds={myActiveRounds}
+              titleForRound={titleForRound}
               onCreate={() => setView('create')}
               onPlay={() => setView('play')}
               onOpenRound={openRound}
@@ -1355,45 +1122,102 @@ export default function App() {
           )}
 
           {view === 'create' && (
-            <CreateRoundView
+            <CreateCourseView
               defaultCity={myProfile?.country && myProfile.country !== 'Sverige' ? myProfile.country : 'Stockholm'}
               onBack={() => setView('home')}
-              onCreate={createAndOpen}
+              onCreate={async (input) => {
+                const courseId = await handleCreateCourse(input);
+                openStart(courseId);
+              }}
             />
           )}
 
+          {view === 'start' &&
+            (startCourse ? (
+              <StartRoundView
+                course={startCourse}
+                holes={holesForCourse(startCourse.courseId, startCourse.ownerId)}
+                isCourseOwner={startCourse.ownerId === uid}
+                onBack={() => setView('play')}
+                onStart={async (input) => {
+                  const roundId = await handleStartRound(startCourse.courseId, input);
+                  setActiveRoundId(roundId);
+                  setSelectedHoleNum(1);
+                  setView('round');
+                }}
+              />
+            ) : (
+              <p className="text-sm text-[#112218]/60">Banan laddas…</p>
+            ))}
+
           {view === 'play' && (
             <PlayView
-              myRounds={myRounds}
-              publicRounds={publicRounds}
-              playerCountByCourse={playerCountByCourse}
-              currentUid={currentUid}
+              myRounds={myActiveRounds}
+              myCourses={myCourses}
+              publicCourses={publicCourses}
+              currentUid={uid}
+              titleForRound={titleForRound}
               initialCode={initialJoinParam}
               onBack={() => setView('home')}
               onOpenRound={openRound}
+              onStartCourse={openStart}
+              onCreateCourse={() => setView('create')}
               onJoin={handleJoinByCode}
             />
           )}
 
           {view === 'round' &&
-            (activeCourse && activePlayerInRound ? (
+            (activeRound && activeRoundCourse && me ? (
               <RoundView
-                course={activeCourse}
+                course={activeRoundCourse}
+                courseDoc={activeCourseDoc}
                 holes={activeHoles}
-                me={activePlayerInRound}
+                me={me}
                 players={activeParticipants}
-                isOwner={activeCourse.ownerId === currentUid}
+                isOwner={activeRound.ownerId === uid}
+                isCourseOwner={activeCourseDoc?.ownerId === uid}
+                readOnly={activeRound.status === 'deleted'}
+                locked={activeRound.locked}
                 selectedHoleNum={selectedHoleNum}
                 onSelectHole={setSelectedHoleNum}
                 onBack={() => setView('play')}
                 onUpdateHoleSips={handleUpdateHoleSips}
                 onSaveHoleConfig={handleSaveHoleConfig}
-                onSaveCourseMeta={handleSaveCourseMeta}
-                onAssignTeam={handleAssignBrutalBallTeam}
-                onInspectPlayer={(uid) => {
-                  setSelectedPlayerUid(uid);
+                onSaveCourseMeta={async (c) => {
+                  // Spelform hör till rundan, övrigt till banan
+                  if (c.courseId === activeRound.roundId) {
+                    if (activeRound.ownerId === uid && c.gameMode && c.gameMode !== activeRound.gameMode) {
+                      await updateRound(activeRound.roundId, { gameMode: c.gameMode as PubGolfGameMode });
+                    }
+                    return;
+                  }
+                  await handleSaveCourseMeta(c);
+                }}
+                onAssignTeam={handleAssignTeam}
+                onInspectPlayer={(playerUid) => {
+                  setSelectedPlayerUid(playerUid);
                   setView('players');
                 }}
+                manageSheet={
+                  <RoundManageSheet
+                    round={activeRound}
+                    course={activeCourseDoc}
+                    players={activeParticipants}
+                    me={me}
+                    myPlayerCode={myPlayerCode}
+                    isRoundOwner={activeRound.ownerId === uid}
+                    isCourseOwner={activeCourseDoc?.ownerId === uid}
+                    onToggleLock={(locked) => updateRound(activeRound.roundId, { locked })}
+                    onAddPlayer={(code) => handleAddPlayer(activeRound.roundId, code)}
+                    onRemovePlayer={(playerUid) => handleRemovePlayer(activeRound.roundId, playerUid)}
+                    onToggleCoursePublic={async (isPublic) => {
+                      if (activeCourseDoc) await handleSaveCourseMeta({ ...activeCourseDoc, isPublic });
+                    }}
+                    onSetCountsForHcp={(counts) => handleSetCountsForHcp(activeRound.roundId, counts)}
+                    onLeave={() => leaveRound(activeRound.roundId)}
+                    onDeleteForAll={(keepMine) => handleDeleteForAll(activeRound.roundId, keepMine)}
+                  />
+                }
               />
             ) : (
               <div className="rounded-3xl border border-[#112218]/10 bg-white p-8 text-center shadow-xs">
@@ -1407,7 +1231,9 @@ export default function App() {
           {view === 'profile' && (
             <MyProfileView
               profile={myProfileFields}
-              stats={careerStatsByUid[currentUid]}
+              playerCode={myPlayerCode}
+              stats={careerStatsByUid[uid]}
+              history={myHistory}
               onBack={() => setView('home')}
               onSave={handleSaveMyProfile}
               onOpenRound={openRound}
@@ -1419,15 +1245,19 @@ export default function App() {
               <button type="button" onClick={() => setView('home')} className="text-sm font-semibold text-[#166534]">
                 ← Tillbaka
               </button>
-              <PgaPlayersView
-                players={allTourPlayers}
-                careerStatsByUid={careerStatsByUid}
-                activePlayer={activePlayerInRound}
-                selectedPlayerUid={selectedPlayerUid}
-                onSelectPlayerUid={(uid) => setSelectedPlayerUid(uid)}
-                onSelectCourseFromHistory={(cId) => openRound(cId)}
-                onSaveMyProfile={handleSaveMyProfile}
-              />
+              <Suspense fallback={<p className="text-sm text-[#112218]/60">Laddar…</p>}>
+                <PgaPlayersView
+                  players={tourPlayers}
+                  careerStatsByUid={careerStatsByUid}
+                  activePlayer={myTourPlayer}
+                  selectedPlayerUid={selectedPlayerUid}
+                  onSelectPlayerUid={(playerUid) => setSelectedPlayerUid(playerUid)}
+                  onSelectCourseFromHistory={(roundId) => {
+                    if (rounds.some((r) => r.roundId === roundId)) openRound(roundId);
+                  }}
+                  onSaveMyProfile={handleSaveMyProfile}
+                />
+              </Suspense>
             </div>
           )}
 

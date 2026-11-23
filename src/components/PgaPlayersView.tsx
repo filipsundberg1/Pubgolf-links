@@ -742,6 +742,7 @@ export const PgaPlayersView: React.FC<PgaPlayersViewProps> = ({
                 value={avatarSeed}
                 onChange={setAvatarSeed}
                 displayName={displayName || activePlayer?.displayName || 'Din Golfare'}
+                unlockStats={activePlayer ? careerStatsByUid[activePlayer.uid] : null}
               />
 
               <div>

@@ -10,7 +10,7 @@ export const AboutView: React.FC<{ onBack: () => void }> = ({ onBack }) => (
 
     <section className="space-y-3 rounded-3xl border border-[#112218]/10 bg-white p-5 text-sm leading-relaxed text-[#112218]/80 shadow-xs">
       <p>
-        Pubgolf Links är en pubgolf-app i tour-stil. Skapa en runda med upp till nio pubar, bjud in
+        Pubgolf Links är en pubgolf-app i tour-stil. Bygg en bana med nio pubar, starta en runda, bjud in
         gänget och håll koll på scoren hål för hål – med bowlingfirande när någon sätter en birdie.
       </p>
       <h2 className="pt-2 font-display text-lg font-bold text-[#112218]">Så funkar det</h2>
@@ -18,7 +18,9 @@ export const AboutView: React.FC<{ onBack: () => void }> = ({ onBack }) => (
         <li>Varje pub är ett hål. Varje klunk räknas som ett slag.</li>
         <li>Varje hål har ett par (1–5 klunkar). Under par = birdie, eagle …</li>
         <li>Hål kan ha egna regler – bryter man dem kan det bli straffslag.</li>
-        <li>Öppna rundor syns för alla under Spela. Privata rundor kräver kod.</li>
+        <li>En bana är banguiden: pubar, dryck, par och regler. Öppna banor kan alla spela.</li>
+        <li>En runda är när ni spelar banan. Den som startar rundan får en privat kod att dela, kan lägga till spelare med spelar-ID och låsa rundan.</li>
+        <li>Rundor du inte vill ska räknas kan du ta bort ur ditt HCP.</li>
         <li>Ditt HCP räknas ut automatiskt från snittet mot par i dina tidigare rundor.</li>
       </ul>
       <h2 className="pt-2 font-display text-lg font-bold text-[#112218]">Drick ansvarsfullt</h2>

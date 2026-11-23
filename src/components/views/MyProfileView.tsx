@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowLeft, Check, ChevronRight, Loader2, Pencil, Shirt } from 'lucide-react';
-import type { PlayerCareerStats, ReusablePlayerProfile } from '../../utils/golfRules';
+import type { PlayerCareerStats, PlayerRoundHistoryItem } from '../../utils/golfRules';
 import { formatEventDate } from '../../utils/golfRules';
 import { AvatarCustomizer, GolferAvatar } from '../GolferAvatar';
 
@@ -16,9 +16,17 @@ export type ProfileFields = {
   avatarSeed: string;
 };
 
+/** En rad i rundhistoriken: alla rundor man spelat, även de som inte räknas i HCP. */
+export interface ProfileHistoryEntry extends PlayerRoundHistoryItem {
+  countsForHcp: boolean;
+  deleted: boolean;
+}
+
 interface MyProfileViewProps {
   profile: ProfileFields;
+  playerCode: string;
   stats: PlayerCareerStats | undefined;
+  history: ProfileHistoryEntry[];
   onBack: () => void;
   onSave: (fields: ProfileFields) => Promise<void>;
   onOpenRound: (courseId: string) => void;
@@ -43,7 +51,7 @@ export function withProfileDefaults(f: ProfileFields): ProfileFields {
   };
 }
 
-export const MyProfileView: React.FC<MyProfileViewProps> = ({ profile, stats, onBack, onSave, onOpenRound }) => {
+export const MyProfileView: React.FC<MyProfileViewProps> = ({ profile, playerCode, stats, history, onBack, onSave, onOpenRound }) => {
   const [draft, setDraft] = useState<ProfileFields>(profile);
   const [editing, setEditing] = useState<'avatar' | 'info' | null>(null);
   const [saving, setSaving] = useState(false);
@@ -68,8 +76,6 @@ export const MyProfileView: React.FC<MyProfileViewProps> = ({ profile, stats, on
     }
   };
 
-  const history = stats?.roundHistory || [];
-
   return (
     <div className="space-y-5 pb-10">
       <button type="button" onClick={onBack} className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#166534]">
@@ -84,6 +90,9 @@ export const MyProfileView: React.FC<MyProfileViewProps> = ({ profile, stats, on
             <div className="text-xs font-semibold uppercase tracking-[0.2em] text-[#D4AF37]">Pubgolf Tour</div>
             <h1 className="truncate font-display text-2xl font-bold">{profile.displayName}</h1>
             <p className="truncate text-sm text-[#F6F4EE]/65">"{profile.nickname}" · {profile.homePub}</p>
+            <p className="mt-1 text-xs text-[#F6F4EE]/65">
+              Spelar-ID <span className="rounded bg-white/10 px-1.5 py-0.5 font-mono font-bold tracking-wider text-[#F6F4EE]">{playerCode || '…'}</span>
+            </p>
           </div>
           <div className="text-center">
             <div className="text-[10px] font-bold uppercase tracking-widest text-[#D4AF37]">HCP</div>
@@ -120,7 +129,7 @@ export const MyProfileView: React.FC<MyProfileViewProps> = ({ profile, stats, on
 
       {editing === 'avatar' && (
         <section className="rounded-3xl border border-[#112218]/10 bg-white p-4 shadow-xs">
-          <AvatarCustomizer value={draft.avatarSeed} displayName={draft.displayName}
+          <AvatarCustomizer value={draft.avatarSeed} displayName={draft.displayName} unlockStats={stats}
             onChange={(seed) => setDraft((d) => ({ ...d, avatarSeed: seed }))} />
         </section>
       )}
@@ -156,6 +165,7 @@ export const MyProfileView: React.FC<MyProfileViewProps> = ({ profile, stats, on
         <h2 className="mb-2 text-xs font-semibold uppercase tracking-[0.15em] text-[#112218]/55">
           Tidigare rundor ({history.length})
         </h2>
+        <p className="mb-2 text-xs text-[#112218]/55">Öppna en runda och tryck på "Rundan" för att ta bort den eller välja att den inte räknas i ditt HCP.</p>
         {history.length === 0 ? (
           <p className="rounded-2xl border border-dashed border-[#112218]/20 px-4 py-5 text-center text-sm text-[#112218]/55">
             Inga spelade rundor än.
@@ -167,7 +177,11 @@ export const MyProfileView: React.FC<MyProfileViewProps> = ({ profile, stats, on
                 className="flex w-full items-center gap-3 rounded-2xl border border-[#112218]/10 bg-white px-4 py-3 text-left shadow-xs hover:bg-[#112218]/5">
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-semibold text-[#112218]">{r.title}</div>
-                  <div className="text-xs text-[#112218]/60">{formatEventDate(r.eventDate)} · {r.city} · {r.thruHoles} hål</div>
+                  <div className="text-xs text-[#112218]/60">
+                    {formatEventDate(r.eventDate)} · {r.city} · {r.thruHoles} hål
+                    {!r.countsForHcp && <span className="font-semibold text-[#856a32]"> · räknas ej i HCP</span>}
+                    {r.deleted && <span className="font-semibold text-red-700"> · raderad av ägaren</span>}
+                  </div>
                 </div>
                 <div className="text-right">
                   <div className="font-mono text-base font-black text-[#112218]">{r.toParFormatted}</div>

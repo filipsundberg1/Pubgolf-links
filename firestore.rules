@@ -35,8 +35,9 @@ service cloud.firestore {
       ]) &&
       data.keys().hasOnly([
         'uid', 'appId', 'displayName', 'nickname', 'country', 'homePub',
-        'signatureDrink', 'favoriteClub', 'handicap', 'bio', 'avatarSeed', 'updatedAt'
+        'signatureDrink', 'favoriteClub', 'handicap', 'bio', 'avatarSeed', 'playerCode', 'updatedAt'
       ]) &&
+      (!('playerCode' in data) || (data.playerCode is string && data.playerCode.matches('^[A-Z]{2}[0-9]{4}$'))) &&
       data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 &&
       data.uid.matches('^[a-zA-Z0-9_\\-]+$') &&
       data.uid == userId &&
@@ -171,6 +172,167 @@ service cloud.firestore {
       data.updatedAt == request.time;
     }
 
+    // Validation Blueprint: Round (/rounds/{roundId}) – a played instance of a course.
+    // The document id IS the invite code, so only people who know the code can find the round.
+    function isValidRound(data, roundId) {
+      return data.keys().hasAll([
+        'roundId', 'appId', 'courseId', 'courseTitle', 'city', 'eventDate',
+        'ownerId', 'ownerName', 'gameMode', 'memberIds', 'locked', 'status', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'roundId', 'appId', 'courseId', 'courseTitle', 'city', 'eventDate',
+        'ownerId', 'ownerName', 'gameMode', 'memberIds', 'locked', 'status', 'updatedAt'
+      ]) &&
+      data.roundId == roundId &&
+      roundId.matches('^PG-[A-Z0-9]{4,8}$') &&
+      data.appId == 'december-links' &&
+      data.courseId is string && data.courseId.size() >= 1 && data.courseId.size() <= 128 &&
+      data.courseTitle is string && data.courseTitle.size() >= 2 && data.courseTitle.size() <= 80 &&
+      data.city is string && data.city.size() >= 2 && data.city.size() <= 60 &&
+      data.eventDate is string && data.eventDate.size() >= 2 && data.eventDate.size() <= 40 &&
+      data.ownerId is string && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.ownerName is string && data.ownerName.size() >= 1 && data.ownerName.size() <= 80 &&
+      data.gameMode in ['single', 'brutal'] &&
+      data.memberIds is list && data.memberIds.size() <= 40 &&
+      data.locked is bool &&
+      data.status in ['active', 'deleted'] &&
+      data.updatedAt == request.time;
+    }
+
+    // Validation Blueprint: RoundParticipant (/rounds/{roundId}/participants/{playerId})
+    function isValidRoundParticipant(data, roundId, playerId) {
+      return data.keys().hasAll([
+        'uid', 'roundId', 'displayName', 'nickname', 'avatarSeed', 'handicap',
+        'sipsHole1', 'sipsHole2', 'sipsHole3', 'sipsHole4', 'sipsHole5',
+        'sipsHole6', 'sipsHole7', 'sipsHole8', 'sipsHole9',
+        'totalSips', 'totalToPar', 'thruHoles', 'countsForHcp', 'keptResult', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'uid', 'roundId', 'displayName', 'nickname', 'avatarSeed', 'handicap', 'playerCode',
+        'teamId', 'teamName',
+        'sipsHole1', 'sipsHole2', 'sipsHole3', 'sipsHole4', 'sipsHole5',
+        'sipsHole6', 'sipsHole7', 'sipsHole8', 'sipsHole9',
+        'totalSips', 'totalToPar', 'thruHoles', 'countsForHcp', 'keptResult', 'updatedAt'
+      ]) &&
+      data.uid == playerId &&
+      data.roundId == roundId &&
+      data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 60 &&
+      data.nickname is string && data.nickname.size() <= 50 &&
+      data.avatarSeed is string && data.avatarSeed.size() >= 1 && data.avatarSeed.size() <= 32 &&
+      data.handicap is string && data.handicap.size() <= 20 &&
+      (!('playerCode' in data) || (data.playerCode is string && data.playerCode.size() <= 12)) &&
+      (!('teamId' in data) || (data.teamId is string && data.teamId.size() <= 64)) &&
+      (!('teamName' in data) || (data.teamName is string && data.teamName.size() <= 60)) &&
+      data.sipsHole1 is int && data.sipsHole1 >= 0 && data.sipsHole1 <= 25 &&
+      data.sipsHole2 is int && data.sipsHole2 >= 0 && data.sipsHole2 <= 25 &&
+      data.sipsHole3 is int && data.sipsHole3 >= 0 && data.sipsHole3 <= 25 &&
+      data.sipsHole4 is int && data.sipsHole4 >= 0 && data.sipsHole4 <= 25 &&
+      data.sipsHole5 is int && data.sipsHole5 >= 0 && data.sipsHole5 <= 25 &&
+      data.sipsHole6 is int && data.sipsHole6 >= 0 && data.sipsHole6 <= 25 &&
+      data.sipsHole7 is int && data.sipsHole7 >= 0 && data.sipsHole7 <= 25 &&
+      data.sipsHole8 is int && data.sipsHole8 >= 0 && data.sipsHole8 <= 25 &&
+      data.sipsHole9 is int && data.sipsHole9 >= 0 && data.sipsHole9 <= 25 &&
+      data.totalSips is int && data.totalSips >= 0 && data.totalSips <= 225 &&
+      data.totalToPar is int && data.totalToPar >= -45 && data.totalToPar <= 180 &&
+      data.thruHoles is int && data.thruHoles >= 0 && data.thruHoles <= 9 &&
+      data.countsForHcp is bool &&
+      data.keptResult is bool &&
+      data.updatedAt == request.time;
+    }
+
+    // Collection: /rounds/{roundId}
+    match /rounds/{roundId} {
+      function roundUnchangedCore() {
+        return incoming().roundId == existing().roundId &&
+          incoming().appId == existing().appId &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().courseId == existing().courseId;
+      }
+
+      // Anyone signed in who knows the code (= document id) may look the round up.
+      allow get: if isSignedIn() && isValidId(roundId);
+      // Listing only returns rounds you are a member of.
+      allow list: if isSignedIn() && request.auth.uid in resource.data.memberIds;
+
+      allow create: if isVerifiedUser() &&
+        isValidRound(incoming(), roundId) &&
+        incoming().ownerId == request.auth.uid &&
+        request.auth.uid in incoming().memberIds &&
+        incoming().status == 'active';
+
+      allow update: if isVerifiedUser() &&
+        isValidRound(incoming(), roundId) &&
+        roundUnchangedCore() &&
+        (
+          // Owner: lock/unlock, add/remove players, change date/game mode, delete for everyone
+          (
+            existing().ownerId == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'courseTitle', 'city', 'eventDate', 'ownerName', 'gameMode',
+              'memberIds', 'locked', 'status', 'updatedAt'
+            ])
+          ) ||
+          // Join with the code: only while active and unlocked, only adding yourself
+          (
+            existing().status == 'active' &&
+            existing().locked == false &&
+            !(request.auth.uid in existing().memberIds) &&
+            incoming().memberIds == existing().memberIds.concat([request.auth.uid]) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['memberIds', 'updatedAt'])
+          ) ||
+          // Leave the round (or remove it from your history): only removing yourself
+          (
+            request.auth.uid in existing().memberIds &&
+            incoming().memberIds == existing().memberIds.removeAll([request.auth.uid]) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['memberIds', 'updatedAt'])
+          )
+        );
+
+      allow delete: if isVerifiedUser() && existing().ownerId == request.auth.uid;
+
+      // Subcollection: /rounds/{roundId}/participants/{playerId}
+      match /participants/{playerId} {
+        function roundData() {
+          return get(/databases/$(database)/documents/rounds/$(roundId)).data;
+        }
+        function roundDataAfter() {
+          return getAfter(/databases/$(database)/documents/rounds/$(roundId)).data;
+        }
+
+        allow get, list: if isSignedIn() && request.auth.uid in roundData().memberIds;
+
+        allow create: if isVerifiedUser() &&
+          isValidId(playerId) &&
+          isValidRoundParticipant(incoming(), roundId, playerId) &&
+          playerId in roundDataAfter().memberIds &&
+          (playerId == request.auth.uid || roundDataAfter().ownerId == request.auth.uid);
+
+        allow update: if isVerifiedUser() &&
+          isValidRoundParticipant(incoming(), roundId, playerId) &&
+          incoming().uid == existing().uid &&
+          incoming().roundId == existing().roundId &&
+          (
+            (
+              existing().uid == request.auth.uid &&
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'displayName', 'nickname', 'avatarSeed', 'handicap', 'playerCode',
+                'teamId', 'teamName',
+                'sipsHole1', 'sipsHole2', 'sipsHole3', 'sipsHole4', 'sipsHole5',
+                'sipsHole6', 'sipsHole7', 'sipsHole8', 'sipsHole9',
+                'totalSips', 'totalToPar', 'thruHoles', 'countsForHcp', 'keptResult', 'updatedAt'
+              ])
+            ) ||
+            (
+              roundData().ownerId == request.auth.uid &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['teamId', 'teamName', 'updatedAt'])
+            )
+          );
+
+        allow delete: if isVerifiedUser() &&
+          (existing().uid == request.auth.uid || roundData().ownerId == request.auth.uid);
+      }
+    }
+
     // Collection: /profiles/{userId}
     match /profiles/{userId} {
       allow get: if isSignedIn() && isValidId(userId) && existing().appId == 'december-links';
@@ -186,9 +348,11 @@ service cloud.firestore {
         existing().uid == request.auth.uid &&
         incoming().uid == existing().uid &&
         incoming().appId == existing().appId &&
+        // Spelar-ID sätts en gång och ändras sedan aldrig
+        (!('playerCode' in existing()) || incoming().playerCode == existing().playerCode) &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'displayName', 'nickname', 'country', 'homePub', 'signatureDrink',
-          'favoriteClub', 'handicap', 'bio', 'avatarSeed', 'updatedAt'
+          'favoriteClub', 'handicap', 'bio', 'avatarSeed', 'playerCode', 'updatedAt'
         ]);
 
       allow delete: if false;

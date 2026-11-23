@@ -13,6 +13,14 @@ import {
   generateInviteCode,
   parseAvatarSeed,
   serializeAvatarConfig,
+  isGearUnlocked,
+  GEAR_CATALOG,
+  generatePlayerCode,
+  generateRoundCode,
+  normalizePlayerCode,
+  roundAsCourse,
+  ROUND_CODE_PATTERN,
+  PLAYER_CODE_PATTERN,
   buildScoreCelebrationClip,
   type PubCourse,
   type PubHole,
@@ -328,6 +336,7 @@ test('parseAvatarSeed and serializeAvatarConfig support legacy themes and full 5
     pants: 'loud' as const,
     skin: 'deep' as const,
     accessory: 'sunglasses' as const,
+    gear: 'driver' as const,
   };
   const serialized = serializeAvatarConfig(custom);
   assert.equal(serialized, 'bg-bk-ld-dp-sg');
@@ -335,6 +344,28 @@ test('parseAvatarSeed and serializeAvatarConfig support legacy themes and full 5
 
   const parsed = parseAvatarSeed(serialized);
   assert.deepEqual(parsed, custom);
+});
+
+test('avatar gear round-trips in the seed and unlocks from career stats', () => {
+  const withJug = serializeAvatarConfig({ ...parseAvatarSeed('bg-bk-ld-dp-sg'), gear: 'jug' });
+  assert.equal(withJug, 'bg-bk-ld-dp-sg-jg');
+  assert.equal(parseAvatarSeed(withJug).gear, 'jug');
+  assert.equal(parseAvatarSeed('bg-bk-ld-dp-sg').gear, 'driver');
+  assert.equal(parseAvatarSeed('bg-bk-ld-dp-sg-zz').gear, 'driver');
+
+  const rookie = { roundsPlayed: 0, careerBirdies: 0, careerEagles: 0, careerAcesAndAlbatrosses: 0 };
+  assert.equal(isGearUnlocked('driver', null), true);
+  assert.equal(isGearUnlocked('putter', rookie), false);
+  assert.equal(isGearUnlocked('putter', null), false);
+
+  const regular = { roundsPlayed: 3, careerBirdies: 9, careerEagles: 1, careerAcesAndAlbatrosses: 0 };
+  assert.equal(isGearUnlocked('putter', regular), true);
+  assert.equal(isGearUnlocked('umbrella', regular), true);
+  assert.equal(isGearUnlocked('flag', regular), true);
+  assert.equal(isGearUnlocked('golden', regular), true);
+  assert.equal(isGearUnlocked('jug', regular), true);
+  assert.equal(isGearUnlocked('golden', { ...regular, careerBirdies: 8 }), false);
+  assert.equal(GEAR_CATALOG.length, 6);
 });
 
 test('buildScoreCelebrationClip generates celebratory bowling clips for Birdie/Ace and roasting clips for Bogey+', () => {
@@ -534,3 +565,32 @@ test('buildBrutalBallLeaderboard combines 2-player team scores and pairs unassig
 });
 
 
+
+test('player codes use initials + 4 digits and round codes match the rules pattern', () => {
+  assert.equal(generatePlayerCode('Filip Sundberg', () => 0.4821), 'FS4821');
+  assert.equal(generatePlayerCode('Åsa Öberg', () => 0.0007), 'AO0007');
+  assert.equal(generatePlayerCode('Adam', () => 0.1234), 'AD1234');
+  assert.equal(generatePlayerCode('', () => 0.5), 'PG5000');
+  assert.equal(generatePlayerCode('Anna Maria von Ek', () => 0.99999), 'AE9999');
+  for (let i = 0; i < 50; i++) {
+    assert.ok(PLAYER_CODE_PATTERN.test(generatePlayerCode('Kalle Anka')));
+    assert.ok(ROUND_CODE_PATTERN.test(generateRoundCode()));
+  }
+  assert.equal(normalizePlayerCode(' fs-4821 '), 'FS4821');
+});
+
+test('roundAsCourse uses the round code as id and the live course title', () => {
+  const round = {
+    roundId: 'PG-ABC234', appId: 'december-links', courseId: 'course-1', courseTitle: 'Gammal titel',
+    city: 'Söder', eventDate: '2026-11-27', ownerId: 'u1', ownerName: 'Filip', gameMode: 'brutal' as const,
+    memberIds: ['u1'], locked: false, status: 'active' as const,
+  };
+  const asCourse = roundAsCourse(round, null);
+  assert.equal(asCourse.courseId, 'PG-ABC234');
+  assert.equal(asCourse.inviteCode, 'PG-ABC234');
+  assert.equal(asCourse.title, 'Gammal titel');
+  assert.equal(asCourse.gameMode, 'brutal');
+  const withCourse = roundAsCourse(round, { ...asCourse, courseId: 'course-1', title: 'December Links', isPublic: true });
+  assert.equal(withCourse.title, 'December Links');
+  assert.equal(withCourse.isPublic, true);
+});

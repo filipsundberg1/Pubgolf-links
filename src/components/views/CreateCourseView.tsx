@@ -2,10 +2,8 @@ import React, { useMemo, useState } from 'react';
 import { ArrowLeft, Check, ChevronDown, Copy, Globe2, Lock, Loader2 } from 'lucide-react';
 import {
   DRINK_CATALOG,
-  GAME_MODE_LABELS,
   VALID_DRINK_TYPES,
   type DrinkCategory,
-  type PubGolfGameMode,
 } from '../../utils/golfRules';
 
 export interface HoleDraft {
@@ -20,30 +18,23 @@ export interface HoleDraft {
   hazardRule: string;
 }
 
-export interface CreateRoundInput {
+/** En bana = mallen (banguiden): pubar, dryck, par och regler. Rundor startas på banan. */
+export interface CreateCourseInput {
   title: string;
   subtitle: string;
   city: string;
-  eventDate: string;
-  gameMode: PubGolfGameMode;
   isPublic: boolean;
   holes: HoleDraft[];
 }
 
-interface CreateRoundViewProps {
+interface CreateCourseViewProps {
   defaultCity: string;
   onBack: () => void;
-  onCreate: (input: CreateRoundInput) => Promise<void>;
+  onCreate: (input: CreateCourseInput) => Promise<void>;
 }
 
 const OTHER = '__other__';
 const HOLE_COUNT = 9;
-
-const todayIso = () => {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-};
 
 const blankHole = (holeNumber: number): HoleDraft => ({
   holeNumber,
@@ -61,12 +52,10 @@ const inputClass =
   'w-full rounded-xl border border-[#112218]/15 bg-white px-3 py-2.5 text-sm text-[#112218] outline-none focus:border-[#166534] focus:ring-2 focus:ring-[#166534]/20';
 const labelClass = 'mb-1 block text-xs font-semibold text-[#112218]/70';
 
-export const CreateRoundView: React.FC<CreateRoundViewProps> = ({ defaultCity, onBack, onCreate }) => {
+export const CreateCourseView: React.FC<CreateCourseViewProps> = ({ defaultCity, onBack, onCreate }) => {
   const [title, setTitle] = useState('');
   const [city, setCity] = useState(defaultCity);
-  const [eventDate, setEventDate] = useState(todayIso());
   const [isPublic, setIsPublic] = useState(false);
-  const [gameMode, setGameMode] = useState<PubGolfGameMode>('single');
   const [holes, setHoles] = useState<HoleDraft[]>(() =>
     Array.from({ length: HOLE_COUNT }, (_, i) => blankHole(i + 1))
   );
@@ -103,9 +92,8 @@ export const CreateRoundView: React.FC<CreateRoundViewProps> = ({ defaultCity, o
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (title.trim().length < 2) return setError('Ge rundan ett namn (minst 2 tecken).');
+    if (title.trim().length < 2) return setError('Ge banan ett namn (minst 2 tecken).');
     if (city.trim().length < 2) return setError('Ange stad eller område.');
-    if (!eventDate) return setError('Välj ett datum.');
     const badDrink = holes.find((h) => h.drinkName.trim().length < 2);
     if (badDrink) {
       setOpenHole(badDrink.holeNumber);
@@ -117,13 +105,11 @@ export const CreateRoundView: React.FC<CreateRoundViewProps> = ({ defaultCity, o
         title: title.trim(),
         subtitle: `Pubgolf i ${city.trim()}`,
         city: city.trim(),
-        eventDate,
-        gameMode,
         isPublic,
         holes,
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Kunde inte skapa rundan. Försök igen.');
+      setError(err instanceof Error ? err.message : 'Kunde inte skapa banan. Försök igen.');
       setSubmitting(false);
     }
   };
@@ -134,36 +120,31 @@ export const CreateRoundView: React.FC<CreateRoundViewProps> = ({ defaultCity, o
         <button type="button" onClick={onBack} className="mb-3 inline-flex items-center gap-1.5 text-sm font-semibold text-[#166534]">
           <ArrowLeft className="h-4 w-4" /> Tillbaka
         </button>
-        <h1 className="font-display text-3xl font-bold text-[#112218]">Skapa runda</h1>
-        <p className="mt-1 text-sm text-[#112218]/65">9 hål · totalt par {totalPar}</p>
+        <h1 className="font-display text-3xl font-bold text-[#112218]">Skapa bana</h1>
+        <p className="mt-1 text-sm text-[#112218]/65">
+          Banan är din banguide: pubar, dryck, par och regler. Rundor startar du sen på banan. 9 hål · totalt par {totalPar}
+        </p>
       </div>
 
       {/* Grundinfo */}
       <section className="space-y-4 rounded-3xl border border-[#112218]/10 bg-white p-5 shadow-xs">
         <div>
-          <label className={labelClass} htmlFor="round-title">Rundans namn</label>
+          <label className={labelClass} htmlFor="round-title">Banans namn</label>
           <input id="round-title" className={inputClass} value={title} maxLength={80}
             placeholder="t.ex. December Links – Söder" onChange={(e) => setTitle(e.target.value)} />
         </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div>
-            <label className={labelClass} htmlFor="round-city">Stad / område</label>
-            <input id="round-city" className={inputClass} value={city} maxLength={60}
-              placeholder="Södermalm, Stockholm" onChange={(e) => setCity(e.target.value)} />
-          </div>
-          <div>
-            <label className={labelClass} htmlFor="round-date">Datum</label>
-            <input id="round-date" type="date" className={inputClass} value={eventDate}
-              onChange={(e) => setEventDate(e.target.value)} />
-          </div>
+        <div>
+          <label className={labelClass} htmlFor="round-city">Stad / område</label>
+          <input id="round-city" className={inputClass} value={city} maxLength={60}
+            placeholder="Södermalm, Stockholm" onChange={(e) => setCity(e.target.value)} />
         </div>
 
         <div>
-          <span className={labelClass}>Vem får vara med?</span>
+          <span className={labelClass}>Vem får spela banan?</span>
           <div className="grid grid-cols-2 gap-2">
             {[
-              { value: true, icon: Globe2, title: 'Öppen runda', text: 'Syns under Spela, ingen kod.' },
-              { value: false, icon: Lock, title: 'Privat runda', text: 'Gå med via kod som skapas.' },
+              { value: true, icon: Globe2, title: 'Öppen bana', text: 'Alla kan starta en egen runda på den.' },
+              { value: false, icon: Lock, title: 'Privat bana', text: 'Bara du kan starta rundor på den.' },
             ].map((opt) => {
               const active = isPublic === opt.value;
               const Icon = opt.icon;
@@ -179,21 +160,6 @@ export const CreateRoundView: React.FC<CreateRoundViewProps> = ({ defaultCity, o
           </div>
         </div>
 
-        <div>
-          <span className={labelClass}>Spelform</span>
-          <div className="grid grid-cols-2 gap-2">
-            {(Object.keys(GAME_MODE_LABELS) as PubGolfGameMode[]).map((mode) => {
-              const active = gameMode === mode;
-              return (
-                <button key={mode} type="button" onClick={() => setGameMode(mode)}
-                  className={`rounded-2xl border-2 p-3 text-left transition ${active ? 'border-[#D4AF37] bg-[#D4AF37]/10' : 'border-[#112218]/10 bg-white'}`}>
-                  <div className="text-sm font-semibold text-[#112218]">{GAME_MODE_LABELS[mode].title}</div>
-                  <div className="text-xs text-[#112218]/60">{GAME_MODE_LABELS[mode].description}</div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
       </section>
 
       {/* Hål */}
@@ -322,7 +288,7 @@ export const CreateRoundView: React.FC<CreateRoundViewProps> = ({ defaultCity, o
           <button type="submit" disabled={submitting}
             className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#112218] py-3.5 text-sm font-bold text-[#F6F4EE] shadow-lg disabled:opacity-60">
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4 text-[#D4AF37]" />}
-            {submitting ? 'Skapar rundan…' : 'Skapa runda'}
+            {submitting ? 'Skapar banan…' : 'Skapa bana'}
           </button>
         </div>
       </div>

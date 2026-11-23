@@ -49,6 +49,76 @@ export interface PubCourse {
   isPublic?: boolean;
 }
 
+/**
+ * En runda = ett faktiskt spelat tillfälle på en bana (mall).
+ * Dokument-id är rundans kod (t.ex. PG-7KQ2MX) – bara den som har koden hittar rundan.
+ */
+export type RoundStatus = 'active' | 'deleted';
+
+export interface PubRound {
+  roundId: string;
+  appId: string;
+  courseId: string;
+  courseTitle: string;
+  city: string;
+  eventDate: string;
+  ownerId: string;
+  ownerName: string;
+  gameMode: PubGolfGameMode;
+  memberIds: string[];
+  locked: boolean;
+  status: RoundStatus;
+}
+
+/** Rundan i samma form som en PubCourse, så leaderboard/statistik kan återanvändas. */
+export function roundAsCourse(round: PubRound, course?: PubCourse | null): PubCourse {
+  return {
+    courseId: round.roundId,
+    appId: round.appId,
+    inviteCode: round.roundId,
+    title: course?.title || round.courseTitle,
+    subtitle: course?.subtitle || '',
+    city: round.city,
+    eventDate: round.eventDate,
+    ownerId: round.ownerId,
+    ownerName: round.ownerName,
+    gameMode: round.gameMode,
+    isPublic: course?.isPublic === true,
+  };
+}
+
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+/** Rundkod med 6 slumpade tecken (~1 miljard kombinationer). */
+export function generateRoundCode(random: () => number = Math.random): string {
+  let suffix = '';
+  for (let i = 0; i < 6; i++) suffix += CODE_ALPHABET[Math.floor(random() * CODE_ALPHABET.length)];
+  return `PG-${suffix}`;
+}
+
+export const ROUND_CODE_PATTERN = /^PG-[A-Z0-9]{4,8}$/;
+export const PLAYER_CODE_PATTERN = /^[A-Z]{2}[0-9]{4}$/;
+
+/** Spelar-ID: initialer + fyra siffror, t.ex. "Filip Sundberg" -> FS4821. */
+export function generatePlayerCode(displayName: string, random: () => number = Math.random): string {
+  const letters = (displayName || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z ]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+  let initials =
+    letters.length >= 2 ? letters[0][0] + letters[letters.length - 1][0] : (letters[0] || '').slice(0, 2);
+  if (initials.length < 2) initials = (initials + 'PG').slice(0, 2);
+  const digits = String(Math.floor(random() * 10000)).padStart(4, '0');
+  return `${initials}${digits}`;
+}
+
+export function normalizePlayerCode(input: string): string {
+  return input.trim().toUpperCase().replace(/[\s-]/g, '');
+}
+
 export interface ReusablePlayerProfile {
   uid: string;
   appId: string;
@@ -61,10 +131,17 @@ export interface ReusablePlayerProfile {
   handicap: string;
   bio: string;
   avatarSeed: string;
+  /** Spelar-ID som ägare använder för att lägga till spelare, t.ex. FS4821. */
+  playerCode?: string;
 }
 
 export interface PlayerTourProfile extends ReusablePlayerProfile {
+  /** För rundor: rundans id (kod). */
   courseId: string;
+  /** false = spelaren har valt att rundan inte ska räknas i HCP. */
+  countsForHcp?: boolean;
+  /** true = ägaren raderade rundan och spelaren valde att spara sitt resultat. */
+  keptResult?: boolean;
   teamId?: string;
   teamName?: string;
   sips: number[]; // length 9, 0 = ej spelat, >= 1 = antal klunkar/svep
@@ -1094,6 +1171,7 @@ export type HatStyle = 'flatcap' | 'visor' | 'cap' | 'bucket' | 'beanie' | 'none
 export type PantsStyle = 'plaid' | 'chino' | 'navy' | 'loud' | 'corduroy';
 export type SkinTone = 'light' | 'warm' | 'medium' | 'deep';
 export type FaceAccessory = 'clean' | 'mustache' | 'beard' | 'sunglasses' | 'cigar';
+export type GearItem = 'driver' | 'putter' | 'flag' | 'umbrella' | 'golden' | 'jug';
 
 export interface AvatarConfig {
   jacket: JacketTheme;
@@ -1101,6 +1179,47 @@ export interface AvatarConfig {
   pants: PantsStyle;
   skin: SkinTone;
   accessory: FaceAccessory;
+  gear: GearItem;
+}
+
+/** Stats needed to decide which gear a player has unlocked (subset of PlayerCareerStats). */
+export type GearUnlockStats = Pick<
+  PlayerCareerStats,
+  'roundsPlayed' | 'careerBirdies' | 'careerEagles' | 'careerAcesAndAlbatrosses'
+>;
+
+export interface GearDefinition {
+  id: GearItem;
+  label: string;
+  requirement: string;
+  /** Returns [current, goal] so the UI can show progress. */
+  progress: (stats: GearUnlockStats) => [number, number];
+}
+
+const birdiesOrBetter = (s: GearUnlockStats) =>
+  s.careerBirdies + s.careerEagles + s.careerAcesAndAlbatrosses;
+
+export const GEAR_CATALOG: GearDefinition[] = [
+  { id: 'driver', label: 'Driver', requirement: 'Startutrustning', progress: () => [1, 1] },
+  { id: 'putter', label: 'Putter', requirement: 'Spela din första runda', progress: (s) => [s.roundsPlayed, 1] },
+  { id: 'flag', label: 'Flaggstång', requirement: 'Gör din första birdie', progress: (s) => [birdiesOrBetter(s), 1] },
+  { id: 'umbrella', label: 'Novemberparaply', requirement: 'Spela 3 rundor', progress: (s) => [s.roundsPlayed, 3] },
+  { id: 'golden', label: 'Guldklubba', requirement: '10 birdies eller bättre totalt', progress: (s) => [birdiesOrBetter(s), 10] },
+  {
+    id: 'jug',
+    label: 'Claret Jug',
+    requirement: 'Gör en eagle (eller bättre)',
+    progress: (s) => [s.careerEagles + s.careerAcesAndAlbatrosses, 1],
+  },
+];
+
+export function isGearUnlocked(gear: GearItem, stats?: GearUnlockStats | null): boolean {
+  const def = GEAR_CATALOG.find((g) => g.id === gear);
+  if (!def) return false;
+  if (gear === 'driver') return true;
+  if (!stats) return false;
+  const [current, goal] = def.progress(stats);
+  return current >= goal;
 }
 
 const JACKET_TO_CODE: Record<JacketTheme, string> = {
@@ -1190,6 +1309,21 @@ const ACC_TO_CODE: Record<FaceAccessory, string> = {
   sunglasses: 'sg',
   cigar: 'cg',
 };
+const GEAR_TO_CODE: Record<GearItem, string> = {
+  driver: 'dr',
+  putter: 'pt',
+  flag: 'fl',
+  umbrella: 'um',
+  golden: 'gd',
+  jug: 'jg',
+};
+const CODE_TO_GEAR: Record<string, GearItem> = Object.fromEntries(
+  Object.entries(GEAR_TO_CODE).flatMap(([gear, code]) => [
+    [code, gear as GearItem],
+    [gear, gear as GearItem],
+  ])
+);
+
 const CODE_TO_ACC: Record<string, FaceAccessory> = {
   cl: 'clean',
   clean: 'clean',
@@ -1214,6 +1348,7 @@ export function parseAvatarSeed(seed?: string): AvatarConfig {
       pants: CODE_TO_PANTS[parts[2]] || 'plaid',
       skin: CODE_TO_SKIN[parts[3]] || 'warm',
       accessory: CODE_TO_ACC[parts[4]] || 'clean',
+      gear: CODE_TO_GEAR[parts[5]] || 'driver',
     };
   }
 
@@ -1223,6 +1358,7 @@ export function parseAvatarSeed(seed?: string): AvatarConfig {
     pants: 'plaid',
     skin: 'warm',
     accessory: 'clean',
+    gear: 'driver',
   };
 }
 
@@ -1232,7 +1368,9 @@ export function serializeAvatarConfig(config: AvatarConfig): string {
   const p = PANTS_TO_CODE[config.pants] || 'pl';
   const s = SKIN_TO_CODE[config.skin] || 'wm';
   const a = ACC_TO_CODE[config.accessory] || 'cl';
-  return `${j}-${h}-${p}-${s}-${a}`;
+  const g = GEAR_TO_CODE[config.gear] || 'dr';
+  // Driver is the default: keep 5-part seeds so older seeds stay identical.
+  return g === 'dr' ? `${j}-${h}-${p}-${s}-${a}` : `${j}-${h}-${p}-${s}-${a}-${g}`;
 }
 
 export type AvatarAnimationPose =
