@@ -29,6 +29,8 @@ export function parseProfile(d: DocumentData): ReusablePlayerProfile {
     bio: String(d.bio),
     avatarSeed: String(d.avatarSeed || 'emerald'),
     playerCode: d.playerCode ? String(d.playerCode) : undefined,
+    wins: typeof d.wins === 'number' ? d.wins : undefined,
+    lastActiveMs: d.updatedAt?.toMillis ? d.updatedAt.toMillis() : undefined,
   };
 }
 
@@ -48,6 +50,7 @@ export function profilePayload(p: ReusablePlayerProfile): Record<string, unknown
     updatedAt: serverTimestamp(),
   };
   if (p.playerCode) payload.playerCode = p.playerCode;
+  if (typeof p.wins === 'number') payload.wins = Math.max(0, Math.min(9999, Math.floor(p.wins)));
   return payload;
 }
 

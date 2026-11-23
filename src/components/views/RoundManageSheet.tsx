@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Copy, Globe2, KeyRound, Loader2, Lock, LockOpen, LogOut, Trash2, UserMinus, UserPlus } from 'lucide-react';
-import type { PlayerTourProfile, PubCourse, PubRound } from '../../utils/golfRules';
+import type { PlayerTourProfile, PubCourse, PubRound, ReusablePlayerProfile } from '../../utils/golfRules';
 import { GolferAvatar } from '../GolferAvatar';
 
 interface RoundManageSheetProps {
@@ -13,6 +13,8 @@ interface RoundManageSheetProps {
   isCourseOwner: boolean;
   onToggleLock: (locked: boolean) => Promise<void>;
   onAddPlayer: (playerCode: string) => Promise<{ ok: boolean; message: string }>;
+  /** Vänner (och folk man följer) som inte är med än – läggs till med ett tryck. */
+  quickAdd?: ReusablePlayerProfile[];
   onRemovePlayer: (uid: string) => Promise<void>;
   onToggleCoursePublic: (isPublic: boolean) => Promise<void>;
   onSetCountsForHcp: (counts: boolean) => Promise<void>;
@@ -41,6 +43,7 @@ export const RoundManageSheet: React.FC<RoundManageSheetProps> = ({
   isCourseOwner,
   onToggleLock,
   onAddPlayer,
+  quickAdd = [],
   onRemovePlayer,
   onToggleCoursePublic,
   onSetCountsForHcp,
@@ -111,7 +114,7 @@ export const RoundManageSheet: React.FC<RoundManageSheetProps> = ({
             <ul className="space-y-1">
               {players.map((p) => (
                 <li key={p.uid} className="flex items-center gap-3 rounded-xl px-1 py-1.5">
-                  <GolferAvatar avatarSeed={p.avatarSeed} displayName={p.displayName} size="xs" />
+                  <GolferAvatar avatarSeed={p.avatarSeed} wins={p.wins} displayName={p.displayName} size="xs" />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium text-[#112218]">{p.displayName}{p.uid === round.ownerId && ' (ägare)'}</div>
                     {p.playerCode && <div className="font-mono text-[11px] text-[#112218]/50">{p.playerCode}</div>}
@@ -126,6 +129,25 @@ export const RoundManageSheet: React.FC<RoundManageSheetProps> = ({
                 </li>
               ))}
             </ul>
+            {quickAdd.length > 0 && (
+              <div className="mt-3">
+                <div className="mb-1.5 text-[11px] font-semibold text-[#112218]/55">Lägg till vänner</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {quickAdd.map((f) => (
+                    <button key={f.uid} type="button" disabled={!!busy}
+                      onClick={() => void run(`qa-${f.uid}`, async () => {
+                        const res = await onAddPlayer(f.playerCode || '');
+                        setAddMsg({ ok: res.ok, text: res.message });
+                      })}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-[#166534]/30 bg-[#166534]/5 py-1 pl-1 pr-2.5 text-xs font-semibold text-[#112218] disabled:opacity-50">
+                      <GolferAvatar avatarSeed={f.avatarSeed} displayName={f.displayName} size="xs" />
+                      {busy === `qa-${f.uid}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <UserPlus className="h-3 w-3 text-[#166534]" />}
+                      {f.displayName.split(' ')[0]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <form className="mt-3 flex gap-2"
               onSubmit={(e) => {
                 e.preventDefault();

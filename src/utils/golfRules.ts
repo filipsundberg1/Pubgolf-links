@@ -133,6 +133,10 @@ export interface ReusablePlayerProfile {
   avatarSeed: string;
   /** Spelar-ID som ägare använder för att lägga till spelare, t.ex. FS4821. */
   playerCode?: string;
+  /** Antal vunna rundor (synkas från statistiken så andra ser stjärnan). */
+  wins?: number;
+  /** Senast profilen sparades (ungefär senast aktiv). */
+  lastActiveMs?: number;
 }
 
 export interface PlayerTourProfile extends ReusablePlayerProfile {
@@ -178,6 +182,16 @@ export interface GolfScoreEvaluation {
 }
 
 export const APP_ID = 'december-links';
+
+/** Admins (Filip och Adam). Måste matcha isAdmin() i firestore.rules. */
+export const ADMIN_UIDS = ['Xg358wyGpsNui9FLyOE4IL4xKqH2', '2qeuBiMqAVUTfWbL6JH5TGRw9BA3'];
+
+/** Vänner: en "follow" per riktning. Följer båda varandra = vänner. */
+export interface FollowEdge {
+  followerId: string;
+  targetId: string;
+  dismissed: boolean;
+}
 
 export interface DrinkCatalogEntry {
   label: string;
@@ -932,29 +946,76 @@ export interface PlayerRoundHistoryItem {
 export interface PlayerCareerStats {
   uid: string;
   roundsPlayed: number;
+  /** Rundor där alla 9 hål spelats – de som räknas till HCP. */
+  completedRounds: number;
   totalHolesPlayed: number;
   totalCareerSips: number;
   totalCareerToPar: number;
   averageToPar: number | null;
+  /** HCP som visas, t.ex. "54.0", "12.4" eller "+1.2" (plushandicap). */
   computedHandicap: string;
+  /** HCP som tal (negativt = plushandicap). 54 för nya spelare. */
+  handicapIndex: number;
   careerAcesAndAlbatrosses: number;
   careerEagles: number;
+  /** Eagle eller bättre (minst två under par). */
+  careerEaglesOrBetter: number;
+  careerHoleInOnes: number;
   careerBirdies: number;
   careerPars: number;
   careerSipPrecisionPct: number;
+  wins: number;
   bestRound: PlayerRoundHistoryItem | null;
   roundHistory: PlayerRoundHistoryItem[];
 }
 
+export const STARTING_HANDICAP = 54;
+/** Singelhandicap = under 10. */
+export const SINGLE_HANDICAP_LIMIT = 10;
+
+/** Visar HCP som i golf: 54.0, 12.4, 0.0 eller +1.2 för plushandicap. */
+export function formatHandicap(index: number): string {
+  const rounded = Math.round(index * 10) / 10;
+  if (rounded < 0) return `+${Math.abs(rounded).toFixed(1)}`;
+  return rounded.toFixed(1);
+}
+
+/** Läser tillbaka en HCP-sträng till tal. Okänt = 54. */
+export function parseHandicap(value: string | undefined | null): number {
+  if (!value) return STARTING_HANDICAP;
+  const v = value.trim();
+  const n = Number(v.replace(/^\+/, ''));
+  if (!Number.isFinite(n)) return STARTING_HANDICAP;
+  return v.startsWith('+') ? -n : n;
+}
+
 /**
- * Calculates a player's career statistics and automatic Handicap (HCP) as the
- * average score relative to par across all rounds where the player has played at least 1 hole.
+ * HCP ungefär som World Handicap System: varje hel runda (9 hål) ger ett
+ * "differential" = resultat mot par omräknat till 18 hål. HCP = snittet av de
+ * bästa av de senaste 20 rundorna (1 bästa vid 1–5 rundor, 2 vid 6–8 …, 8 vid 20).
+ * Max 54. Utan hela rundor är HCP 54.
+ */
+export function calculateHandicapIndex(toParPerCompletedRound: number[]): number {
+  const recent = toParPerCompletedRound.slice(-20).map((toPar) => toPar * 2);
+  const n = recent.length;
+  if (n === 0) return STARTING_HANDICAP;
+  const count = n <= 5 ? 1 : n <= 8 ? 2 : n <= 11 ? 3 : n <= 14 ? 4 : n <= 16 ? 5 : n <= 18 ? 6 : n === 19 ? 7 : 8;
+  const best = [...recent].sort((a, b) => a - b).slice(0, count);
+  const avg = best.reduce((s, v) => s + v, 0) / best.length;
+  return Math.min(STARTING_HANDICAP, Math.round(avg * 10) / 10);
+}
+
+/**
+ * Räknar ut karriärstatistik, HCP och vinster.
+ * `allParticipantsByCourse` används för att avgöra vinnare (även spelare som valt
+ * att inte räkna rundan i sitt HCP är med och tävlar). Utelämnas = samma som participantsByCourse.
  */
 export function calculatePlayerCareerStats(
   uid: string,
   courses: PubCourse[],
   participantsByCourse: Record<string, PlayerTourProfile[]>,
-  holesByCourse: Record<string, PubHole[]>
+  holesByCourse: Record<string, PubHole[]>,
+  allParticipantsByCourse?: Record<string, PlayerTourProfile[]>
 ): PlayerCareerStats {
   let roundsPlayed = 0;
   let totalHolesPlayed = 0;
@@ -962,11 +1023,15 @@ export function calculatePlayerCareerStats(
   let totalCareerToPar = 0;
   let careerAcesAndAlbatrosses = 0;
   let careerEagles = 0;
+  let careerEaglesOrBetter = 0;
+  let careerHoleInOnes = 0;
   let careerBirdies = 0;
   let careerPars = 0;
   let totalParOrBetterHoles = 0;
+  let wins = 0;
   let bestRound: PlayerRoundHistoryItem | null = null;
   const roundHistory: PlayerRoundHistoryItem[] = [];
+  const completed: { date: string; toPar: number }[] = [];
 
   for (const course of courses) {
     const courseParts = participantsByCourse[course.courseId] || [];
@@ -990,28 +1055,43 @@ export function calculatePlayerCareerStats(
       toParFormatted: summary.toParFormatted,
     };
 
-    if (summary.thruHoles > 0) {
-      roundHistory.push(historyItem);
-      roundsPlayed += 1;
-      totalHolesPlayed += summary.thruHoles;
-      totalCareerSips += summary.totalSips;
-      totalCareerToPar += summary.totalToPar;
-      careerAcesAndAlbatrosses += summary.acesAndAlbatrosses;
-      careerEagles += summary.eagles;
-      careerBirdies += summary.birdies;
-      careerPars += summary.pars;
+    if (summary.thruHoles === 0) continue;
 
-      const orderedHoles = [...courseHoles].sort((a, b) => a.holeNumber - b.holeNumber);
-      for (let i = 0; i < 9; i++) {
-        const sips = participant.sips[i] ?? 0;
-        const par = orderedHoles[i]?.par ?? 4;
-        if (sips > 0 && sips <= par) {
-          totalParOrBetterHoles += 1;
-        }
-      }
+    roundHistory.push(historyItem);
+    roundsPlayed += 1;
+    totalHolesPlayed += summary.thruHoles;
+    totalCareerSips += summary.totalSips;
+    totalCareerToPar += summary.totalToPar;
+    careerAcesAndAlbatrosses += summary.acesAndAlbatrosses;
+    careerEagles += summary.eagles;
+    careerBirdies += summary.birdies;
+    careerPars += summary.pars;
 
-      if (!bestRound || summary.totalToPar < bestRound.totalToPar) {
-        bestRound = historyItem;
+    const orderedHoles = [...courseHoles].sort((a, b) => a.holeNumber - b.holeNumber);
+    for (let i = 0; i < 9; i++) {
+      const sips = participant.sips[i] ?? 0;
+      const par = orderedHoles[i]?.par ?? 4;
+      if (sips <= 0) continue;
+      if (sips <= par) totalParOrBetterHoles += 1;
+      if (sips === 1) careerHoleInOnes += 1;
+      if (sips - par <= -2) careerEaglesOrBetter += 1;
+    }
+
+    if (!bestRound || summary.totalToPar < bestRound.totalToPar) {
+      bestRound = historyItem;
+    }
+
+    if (summary.thruHoles === 9) {
+      completed.push({ date: course.eventDate, toPar: summary.totalToPar });
+
+      // Vinst: lägst score bland dem som spelat klart alla 9 hål (minst två). Delad vinst räknas.
+      const field = (allParticipantsByCourse || participantsByCourse)[course.courseId] || courseParts;
+      const finishers = field
+        .map((p) => calculateRoundSummary(p.sips, courseHoles))
+        .filter((s) => s.thruHoles === 9);
+      if (finishers.length >= 2) {
+        const bestScore = Math.min(...finishers.map((s) => s.totalToPar));
+        if (summary.totalToPar === bestScore) wins += 1;
       }
     }
   }
@@ -1019,16 +1099,8 @@ export function calculatePlayerCareerStats(
   const averageToPar =
     roundsPlayed > 0 ? Math.round((totalCareerToPar / roundsPlayed) * 10) / 10 : null;
 
-  let computedHandicap = '0.0';
-  if (averageToPar !== null) {
-    if (averageToPar === 0) {
-      computedHandicap = '0.0';
-    } else if (averageToPar > 0) {
-      computedHandicap = `+${averageToPar.toFixed(1)}`;
-    } else {
-      computedHandicap = `${averageToPar.toFixed(1)}`;
-    }
-  }
+  completed.sort((a, b) => a.date.localeCompare(b.date));
+  const handicapIndex = calculateHandicapIndex(completed.map((c) => c.toPar));
 
   const careerSipPrecisionPct =
     totalHolesPlayed > 0 ? Math.round((totalParOrBetterHoles / totalHolesPlayed) * 100) : 0;
@@ -1036,16 +1108,21 @@ export function calculatePlayerCareerStats(
   return {
     uid,
     roundsPlayed,
+    completedRounds: completed.length,
     totalHolesPlayed,
     totalCareerSips,
     totalCareerToPar,
     averageToPar,
-    computedHandicap,
+    computedHandicap: formatHandicap(handicapIndex),
+    handicapIndex,
     careerAcesAndAlbatrosses,
     careerEagles,
+    careerEaglesOrBetter,
+    careerHoleInOnes,
     careerBirdies,
     careerPars,
     careerSipPrecisionPct,
+    wins,
     bestRound,
     roundHistory,
   };
@@ -1166,27 +1243,54 @@ export function validatePlayerProfileInput(input: {
   return { valid: true };
 }
 
-export type JacketTheme = 'emerald' | 'gold' | 'navy' | 'burgundy' | 'slate';
-export type HatStyle = 'flatcap' | 'visor' | 'cap' | 'bucket' | 'beanie' | 'none';
-export type PantsStyle = 'plaid' | 'chino' | 'navy' | 'loud' | 'corduroy';
+export type JacketTheme = 'emerald' | 'gold' | 'navy' | 'burgundy' | 'slate' | 'pink' | 'sky' | 'orange';
+export type TopStyle = 'jacket' | 'polo' | 'sweater' | 'whitepike' | 'none';
+export type HatStyle = 'flatcap' | 'visor' | 'cap' | 'bucket' | 'beanie' | 'cowboy' | 'santa' | 'none';
+export type PantsStyle = 'plaid' | 'chino' | 'navy' | 'loud' | 'corduroy' | 'jeans' | 'shorts';
 export type SkinTone = 'light' | 'warm' | 'medium' | 'deep';
+export type EyeStyle = 'none' | 'sunglasses' | 'glasses';
+export type FacialHair = 'clean' | 'stubble' | 'mustache' | 'beard';
+export type MouthItem = 'none' | 'cigar';
+export type HairColor = 'brown' | 'black' | 'blonde' | 'ginger' | 'grey';
+export type GearItem = 'driver' | 'putter' | 'flag' | 'umbrella' | 'golden' | 'jug' | 'ball';
+/** @deprecated Gamla avatarer hade ett enda tillbehör. Finns kvar för att läsa äldre seeds. */
 export type FaceAccessory = 'clean' | 'mustache' | 'beard' | 'sunglasses' | 'cigar';
-export type GearItem = 'driver' | 'putter' | 'flag' | 'umbrella' | 'golden' | 'jug';
 
 export interface AvatarConfig {
+  /** Färg på tröja/jacka (och keps). */
   jacket: JacketTheme;
+  top: TopStyle;
   hat: HatStyle;
   pants: PantsStyle;
   skin: SkinTone;
-  accessory: FaceAccessory;
+  eyes: EyeStyle;
+  facialHair: FacialHair;
+  mouth: MouthItem;
+  hair: HairColor;
   gear: GearItem;
+  /** Antal hole-in-ones som visas på guldbollen. */
+  ballCount: number;
 }
 
-/** Stats needed to decide which gear a player has unlocked (subset of PlayerCareerStats). */
+/** Statistik som låser upp gear och kläder (delmängd av PlayerCareerStats). */
 export type GearUnlockStats = Pick<
   PlayerCareerStats,
-  'roundsPlayed' | 'careerBirdies' | 'careerEagles' | 'careerAcesAndAlbatrosses'
+  | 'roundsPlayed'
+  | 'careerBirdies'
+  | 'careerEaglesOrBetter'
+  | 'careerHoleInOnes'
+  | 'wins'
+  | 'handicapIndex'
 >;
+
+export const EMPTY_UNLOCK_STATS: GearUnlockStats = {
+  roundsPlayed: 0,
+  careerBirdies: 0,
+  careerEaglesOrBetter: 0,
+  careerHoleInOnes: 0,
+  wins: 0,
+  handicapIndex: STARTING_HANDICAP,
+};
 
 export interface GearDefinition {
   id: GearItem;
@@ -1196,21 +1300,19 @@ export interface GearDefinition {
   progress: (stats: GearUnlockStats) => [number, number];
 }
 
-const birdiesOrBetter = (s: GearUnlockStats) =>
-  s.careerBirdies + s.careerEagles + s.careerAcesAndAlbatrosses;
-
 export const GEAR_CATALOG: GearDefinition[] = [
   { id: 'driver', label: 'Driver', requirement: 'Startutrustning', progress: () => [1, 1] },
   { id: 'putter', label: 'Putter', requirement: 'Spela din första runda', progress: (s) => [s.roundsPlayed, 1] },
-  { id: 'flag', label: 'Flaggstång', requirement: 'Gör din första birdie', progress: (s) => [birdiesOrBetter(s), 1] },
-  { id: 'umbrella', label: 'Novemberparaply', requirement: 'Spela 3 rundor', progress: (s) => [s.roundsPlayed, 3] },
-  { id: 'golden', label: 'Guldklubba', requirement: '10 birdies eller bättre totalt', progress: (s) => [birdiesOrBetter(s), 10] },
   {
-    id: 'jug',
-    label: 'Claret Jug',
-    requirement: 'Gör en eagle (eller bättre)',
-    progress: (s) => [s.careerEagles + s.careerAcesAndAlbatrosses, 1],
+    id: 'flag',
+    label: 'Flaggstång',
+    requirement: 'Gör din första birdie',
+    progress: (s) => [s.careerBirdies + s.careerEaglesOrBetter, 1],
   },
+  { id: 'umbrella', label: 'Novemberparaply', requirement: 'Spela 3 rundor', progress: (s) => [s.roundsPlayed, 3] },
+  { id: 'golden', label: 'Guldklubba', requirement: 'Gör 10 eagles', progress: (s) => [s.careerEaglesOrBetter, 10] },
+  { id: 'jug', label: 'Claret Jug', requirement: 'Vinn en runda', progress: (s) => [s.wins, 1] },
+  { id: 'ball', label: 'Guldboll', requirement: 'Gör en hole-in-one', progress: (s) => [s.careerHoleInOnes, 1] },
 ];
 
 export function isGearUnlocked(gear: GearItem, stats?: GearUnlockStats | null): boolean {
@@ -1222,155 +1324,127 @@ export function isGearUnlocked(gear: GearItem, stats?: GearUnlockStats | null): 
   return current >= goal;
 }
 
-const JACKET_TO_CODE: Record<JacketTheme, string> = {
-  emerald: 'em',
-  gold: 'go',
-  navy: 'nv',
-  burgundy: 'bg',
-  slate: 'sl',
-};
-const CODE_TO_JACKET: Record<string, JacketTheme> = {
-  em: 'emerald',
-  emerald: 'emerald',
-  go: 'gold',
-  gold: 'gold',
-  nv: 'navy',
-  navy: 'navy',
-  bg: 'burgundy',
-  burgundy: 'burgundy',
-  sl: 'slate',
-  slate: 'slate',
+/** Kläder som kräver något. Allt annat är fritt. */
+export const TOP_UNLOCKS: Partial<Record<TopStyle, { requirement: string; isUnlocked: (s: GearUnlockStats) => boolean }>> = {
+  whitepike: {
+    requirement: 'Nå singelhandicap (under 10)',
+    isUnlocked: (s) => s.handicapIndex < SINGLE_HANDICAP_LIMIT,
+  },
 };
 
-const HAT_TO_CODE: Record<HatStyle, string> = {
-  flatcap: 'fc',
-  visor: 'vs',
-  cap: 'cp',
-  bucket: 'bk',
-  beanie: 'bn',
-  none: 'no',
-};
-const CODE_TO_HAT: Record<string, HatStyle> = {
-  fc: 'flatcap',
-  flatcap: 'flatcap',
-  vs: 'visor',
-  visor: 'visor',
-  cp: 'cap',
-  cap: 'cap',
-  bk: 'bucket',
-  bucket: 'bucket',
-  bn: 'beanie',
-  beanie: 'beanie',
-  no: 'none',
-  none: 'none',
+export function isTopUnlocked(top: TopStyle, stats?: GearUnlockStats | null): boolean {
+  const rule = TOP_UNLOCKS[top];
+  if (!rule) return true;
+  return rule.isUnlocked(stats || EMPTY_UNLOCK_STATS);
+}
+
+/** Vinststjärna: 1 liten, 5 större, 10 stor, 20 största. */
+export type WinStarTier = 0 | 1 | 2 | 3 | 4;
+export function winStarTier(wins: number | undefined): WinStarTier {
+  const w = wins || 0;
+  if (w >= 20) return 4;
+  if (w >= 10) return 3;
+  if (w >= 5) return 2;
+  if (w >= 1) return 1;
+  return 0;
+}
+
+// --- Seed-format ---------------------------------------------------------
+// v2: "2." + tio fält à två tecken + ev. siffror för guldbollen, t.ex.
+// "2.emjkfcplwmsgclcgbrhb3" (max ~25 tecken, Firestore-regeln tillåter 32).
+
+const codeMap = <T extends string>(entries: Record<T, string>) => {
+  const toCode = entries;
+  const fromCode: Record<string, T> = {};
+  for (const [k, v] of Object.entries(entries) as [T, string][]) {
+    fromCode[v] = k;
+    fromCode[k] = k;
+  }
+  return { toCode, fromCode };
 };
 
-const PANTS_TO_CODE: Record<PantsStyle, string> = {
-  plaid: 'pl',
-  chino: 'ch',
-  navy: 'nv',
-  loud: 'ld',
-  corduroy: 'cd',
-};
-const CODE_TO_PANTS: Record<string, PantsStyle> = {
-  pl: 'plaid',
-  plaid: 'plaid',
-  ch: 'chino',
-  chino: 'chino',
-  nv: 'navy',
-  navy: 'navy',
-  ld: 'loud',
-  loud: 'loud',
-  cd: 'corduroy',
-  corduroy: 'corduroy',
+const JACKET = codeMap<JacketTheme>({ emerald: 'em', gold: 'go', navy: 'nv', burgundy: 'bg', slate: 'sl', pink: 'pk', sky: 'sk', orange: 'or' });
+const TOP = codeMap<TopStyle>({ jacket: 'jk', polo: 'po', sweater: 'sw', whitepike: 'wp', none: 'no' });
+const HAT = codeMap<HatStyle>({ flatcap: 'fc', visor: 'vs', cap: 'cp', bucket: 'bk', beanie: 'bn', cowboy: 'cb', santa: 'sa', none: 'no' });
+const PANTS = codeMap<PantsStyle>({ plaid: 'pl', chino: 'ch', navy: 'nv', loud: 'ld', corduroy: 'cd', jeans: 'jn', shorts: 'sh' });
+const SKIN = codeMap<SkinTone>({ light: 'lt', warm: 'wm', medium: 'md', deep: 'dp' });
+const EYES = codeMap<EyeStyle>({ none: 'no', sunglasses: 'sg', glasses: 'gl' });
+const FHAIR = codeMap<FacialHair>({ clean: 'cl', stubble: 'st', mustache: 'ms', beard: 'bd' });
+const MOUTH = codeMap<MouthItem>({ none: 'no', cigar: 'cg' });
+const HAIR = codeMap<HairColor>({ brown: 'br', black: 'bk', blonde: 'bl', ginger: 'gi', grey: 'gr' });
+const GEAR = codeMap<GearItem>({ driver: 'dr', putter: 'pt', flag: 'fl', umbrella: 'um', golden: 'gd', jug: 'jg', ball: 'hb' });
+const LEGACY_ACC: Record<string, FaceAccessory> = {
+  cl: 'clean', clean: 'clean', ms: 'mustache', mustache: 'mustache', bd: 'beard', beard: 'beard',
+  sg: 'sunglasses', sunglasses: 'sunglasses', cg: 'cigar', cigar: 'cigar',
 };
 
-const SKIN_TO_CODE: Record<SkinTone, string> = {
-  light: 'lt',
-  warm: 'wm',
-  medium: 'md',
-  deep: 'dp',
-};
-const CODE_TO_SKIN: Record<string, SkinTone> = {
-  lt: 'light',
-  light: 'light',
-  wm: 'warm',
-  warm: 'warm',
-  md: 'medium',
-  medium: 'medium',
-  dp: 'deep',
-  deep: 'deep',
-};
-
-const ACC_TO_CODE: Record<FaceAccessory, string> = {
-  clean: 'cl',
-  mustache: 'ms',
-  beard: 'bd',
-  sunglasses: 'sg',
-  cigar: 'cg',
-};
-const GEAR_TO_CODE: Record<GearItem, string> = {
-  driver: 'dr',
-  putter: 'pt',
-  flag: 'fl',
-  umbrella: 'um',
-  golden: 'gd',
-  jug: 'jg',
-};
-const CODE_TO_GEAR: Record<string, GearItem> = Object.fromEntries(
-  Object.entries(GEAR_TO_CODE).flatMap(([gear, code]) => [
-    [code, gear as GearItem],
-    [gear, gear as GearItem],
-  ])
-);
-
-const CODE_TO_ACC: Record<string, FaceAccessory> = {
-  cl: 'clean',
-  clean: 'clean',
-  ms: 'mustache',
-  mustache: 'mustache',
-  bd: 'beard',
-  beard: 'beard',
-  sg: 'sunglasses',
-  sunglasses: 'sunglasses',
-  cg: 'cigar',
-  cigar: 'cigar',
+export const DEFAULT_AVATAR: AvatarConfig = {
+  jacket: 'emerald',
+  top: 'jacket',
+  hat: 'flatcap',
+  pants: 'plaid',
+  skin: 'warm',
+  eyes: 'none',
+  facialHair: 'clean',
+  mouth: 'none',
+  hair: 'brown',
+  gear: 'driver',
+  ballCount: 0,
 };
 
 export function parseAvatarSeed(seed?: string): AvatarConfig {
   const raw = (seed || 'emerald').trim().toLowerCase();
-  const parts = raw.split(/[-|:]/).filter(Boolean);
 
-  if (parts.length >= 5) {
+  if (raw.startsWith('2.')) {
+    const body = raw.slice(2);
+    const f = (i: number) => body.slice(i * 2, i * 2 + 2);
+    const count = Number(body.slice(20));
     return {
-      jacket: CODE_TO_JACKET[parts[0]] || 'emerald',
-      hat: CODE_TO_HAT[parts[1]] || 'flatcap',
-      pants: CODE_TO_PANTS[parts[2]] || 'plaid',
-      skin: CODE_TO_SKIN[parts[3]] || 'warm',
-      accessory: CODE_TO_ACC[parts[4]] || 'clean',
-      gear: CODE_TO_GEAR[parts[5]] || 'driver',
+      jacket: JACKET.fromCode[f(0)] || DEFAULT_AVATAR.jacket,
+      top: TOP.fromCode[f(1)] || DEFAULT_AVATAR.top,
+      hat: HAT.fromCode[f(2)] || DEFAULT_AVATAR.hat,
+      pants: PANTS.fromCode[f(3)] || DEFAULT_AVATAR.pants,
+      skin: SKIN.fromCode[f(4)] || DEFAULT_AVATAR.skin,
+      eyes: EYES.fromCode[f(5)] || DEFAULT_AVATAR.eyes,
+      facialHair: FHAIR.fromCode[f(6)] || DEFAULT_AVATAR.facialHair,
+      mouth: MOUTH.fromCode[f(7)] || DEFAULT_AVATAR.mouth,
+      hair: HAIR.fromCode[f(8)] || DEFAULT_AVATAR.hair,
+      gear: GEAR.fromCode[f(9)] || DEFAULT_AVATAR.gear,
+      ballCount: Number.isFinite(count) && count > 0 ? Math.min(999, Math.floor(count)) : 0,
     };
   }
 
+  // Äldre format: "em-fc-pl-wm-sg(-gear)" eller bara en färg
+  const parts = raw.split(/[-|:]/).filter(Boolean);
+  const acc = LEGACY_ACC[parts[4]] || 'clean';
   return {
-    jacket: CODE_TO_JACKET[parts[0]] || 'emerald',
-    hat: 'flatcap',
-    pants: 'plaid',
-    skin: 'warm',
-    accessory: 'clean',
-    gear: 'driver',
+    ...DEFAULT_AVATAR,
+    jacket: JACKET.fromCode[parts[0]] || 'emerald',
+    hat: (parts.length >= 5 && HAT.fromCode[parts[1]]) || 'flatcap',
+    pants: (parts.length >= 5 && PANTS.fromCode[parts[2]]) || 'plaid',
+    skin: (parts.length >= 5 && SKIN.fromCode[parts[3]]) || 'warm',
+    eyes: acc === 'sunglasses' ? 'sunglasses' : 'none',
+    facialHair: acc === 'mustache' ? 'mustache' : acc === 'beard' ? 'beard' : 'clean',
+    mouth: acc === 'cigar' ? 'cigar' : 'none',
+    gear: (parts.length >= 6 && GEAR.fromCode[parts[5]]) || 'driver',
   };
 }
 
 export function serializeAvatarConfig(config: AvatarConfig): string {
-  const j = JACKET_TO_CODE[config.jacket] || 'em';
-  const h = HAT_TO_CODE[config.hat] || 'fc';
-  const p = PANTS_TO_CODE[config.pants] || 'pl';
-  const s = SKIN_TO_CODE[config.skin] || 'wm';
-  const a = ACC_TO_CODE[config.accessory] || 'cl';
-  const g = GEAR_TO_CODE[config.gear] || 'dr';
-  // Driver is the default: keep 5-part seeds so older seeds stay identical.
-  return g === 'dr' ? `${j}-${h}-${p}-${s}-${a}` : `${j}-${h}-${p}-${s}-${a}-${g}`;
+  const c = { ...DEFAULT_AVATAR, ...config };
+  const body =
+    JACKET.toCode[c.jacket] +
+    TOP.toCode[c.top] +
+    HAT.toCode[c.hat] +
+    PANTS.toCode[c.pants] +
+    SKIN.toCode[c.skin] +
+    EYES.toCode[c.eyes] +
+    FHAIR.toCode[c.facialHair] +
+    MOUTH.toCode[c.mouth] +
+    HAIR.toCode[c.hair] +
+    GEAR.toCode[c.gear];
+  const count = c.gear === 'ball' && c.ballCount > 0 ? String(Math.min(999, Math.floor(c.ballCount))) : '';
+  return `2.${body}${count}`;
 }
 
 export type AvatarAnimationPose =

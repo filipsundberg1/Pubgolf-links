@@ -1,11 +1,29 @@
 import React from 'react';
 import type { GearItem } from '../utils/golfRules';
 
+/** Guldboll med antal hole-in-ones. Centrerad i (0,0), radie r. */
+export const GoldBall: React.FC<{ count: number; r?: number }> = ({ count, r = 9 }) => {
+  const label = count > 99 ? '99+' : String(Math.max(1, count));
+  const fontSize = label.length >= 3 ? r * 0.8 : label.length === 2 ? r * 1.0 : r * 1.25;
+  return (
+    <g>
+      <circle r={r} fill="#f4d186" stroke="#7a591b" strokeWidth={r * 0.13} />
+      <circle cx={-r * 0.35} cy={-r * 0.4} r={r * 0.28} fill="#fff7d6" opacity="0.8" />
+      {[[-0.5, 0.45], [0.55, -0.45], [0.5, 0.5], [-0.6, -0.1]].map(([x, y], i) => (
+        <circle key={i} cx={x * r} cy={y * r} r={r * 0.09} fill="#b8892f" opacity="0.6" />
+      ))}
+      <text x="0" y={fontSize * 0.36} fontSize={fontSize} fontWeight="900" fill="#3d2a07" textAnchor="middle" fontFamily="ui-sans-serif, system-ui, sans-serif">
+        {label}
+      </text>
+    </g>
+  );
+};
+
 /**
  * Gear held by the golfer in the round portrait avatar (100x100 viewBox).
  * Drawn behind the torso, along the same diagonal the classic driver used.
  */
-export const PortraitGear: React.FC<{ gear: GearItem; snapped?: boolean }> = ({ gear, snapped }) => {
+export const PortraitGear: React.FC<{ gear: GearItem; snapped?: boolean; ballCount?: number }> = ({ gear, snapped, ballCount = 1 }) => {
   if (snapped) {
     // Disaster pose: whatever you held is now in two pieces.
     return (
@@ -18,6 +36,16 @@ export const PortraitGear: React.FC<{ gear: GearItem; snapped?: boolean }> = ({ 
   }
 
   switch (gear) {
+    case 'ball':
+      return (
+        <g>
+          <line x1="20" y1="24" x2="76" y2="85" stroke="#cbd5e1" strokeWidth="2.4" strokeLinecap="round" />
+          <ellipse cx="19" cy="22" rx="6" ry="3.4" fill="#e2e8f0" transform="rotate(-35 19 22)" />
+          <g transform="translate(84 70)">
+            <GoldBall count={ballCount} r={10} />
+          </g>
+        </g>
+      );
     case 'putter':
       return (
         <g>
@@ -80,8 +108,18 @@ export const PortraitGear: React.FC<{ gear: GearItem; snapped?: boolean }> = ({ 
  * Gear in the swinging hand of the big bowling-style celebration clip.
  * Origin (0,0) is the hand; the club points towards (26,42).
  */
-export const SwingGear: React.FC<{ gear: GearItem }> = ({ gear }) => {
+export const SwingGear: React.FC<{ gear: GearItem; ballCount?: number }> = ({ gear, ballCount = 1 }) => {
   switch (gear) {
+    case 'ball':
+      return (
+        <g>
+          <line x1="0" y1="0" x2="26" y2="42" stroke="#e2e8f0" strokeWidth="3.2" strokeLinecap="round" />
+          <ellipse cx="29" cy="44" rx="8" ry="4.2" fill="#cbd5e1" stroke="#0f172a" strokeWidth="1.2" transform="rotate(-20 29 44)" />
+          <g transform="translate(-4 -10)">
+            <GoldBall count={ballCount} r={11} />
+          </g>
+        </g>
+      );
     case 'putter':
       return (
         <g>

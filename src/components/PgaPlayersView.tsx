@@ -45,13 +45,18 @@ function getDefaultCareerStats(uid: string): PlayerCareerStats {
   return {
     uid,
     roundsPlayed: 0,
+    completedRounds: 0,
     totalHolesPlayed: 0,
     totalCareerSips: 0,
     totalCareerToPar: 0,
     averageToPar: null,
-    computedHandicap: '0.0',
+    computedHandicap: '54.0',
+    handicapIndex: 54,
     careerAcesAndAlbatrosses: 0,
     careerEagles: 0,
+    careerEaglesOrBetter: 0,
+    careerHoleInOnes: 0,
+    wins: 0,
     careerBirdies: 0,
     careerPars: 0,
     careerSipPrecisionPct: 0,
@@ -163,7 +168,7 @@ export const PgaPlayersView: React.FC<PgaPlayersViewProps> = ({
           <div className="flex flex-col justify-between gap-6 sm:flex-row sm:items-center">
             <div className="flex items-center gap-4">
               <GolferAvatar
-                avatarSeed={player.avatarSeed}
+                avatarSeed={player.avatarSeed} wins={player.wins}
                 displayName={player.displayName}
                 size="lg"
               />
@@ -498,7 +503,7 @@ export const PgaPlayersView: React.FC<PgaPlayersViewProps> = ({
                     <div className="flex w-full items-start justify-between gap-3">
                       <div className="flex items-center gap-3 min-w-0">
                         <GolferAvatar
-                          avatarSeed={p.avatarSeed}
+                          avatarSeed={p.avatarSeed} wins={p.wins}
                           displayName={p.displayName}
                           size="sm"
                         />

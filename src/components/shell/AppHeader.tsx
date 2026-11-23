@@ -1,11 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Info, LogOut, UserRound, Users } from 'lucide-react';
+import { ChevronDown, Info, LogOut, ShieldCheck, UserPlus, UserRound, Users } from 'lucide-react';
 import { GolferAvatar } from '../GolferAvatar';
 
 interface AppHeaderProps {
   displayName: string;
   avatarSeed: string;
   handicap: string;
+  wins?: number;
+  friendRequests?: number;
+  isAdmin?: boolean;
+  onOpenFriends: () => void;
+  onOpenAdmin: () => void;
   onGoHome: () => void;
   onOpenMyProfile: () => void;
   onOpenPlayers: () => void;
@@ -18,6 +23,11 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   displayName,
   avatarSeed,
   handicap,
+  wins = 0,
+  friendRequests = 0,
+  isAdmin = false,
+  onOpenFriends,
+  onOpenAdmin,
   onGoHome,
   onOpenMyProfile,
   onOpenPlayers,
@@ -69,9 +79,14 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
             onClick={() => setOpen((v) => !v)}
             aria-haspopup="menu"
             aria-expanded={open}
-            className="flex items-center gap-2 rounded-full border border-[#112218]/15 bg-white py-1 pl-1 pr-2.5 shadow-xs hover:bg-[#112218]/5"
+            className="relative flex items-center gap-2 rounded-full border border-[#112218]/15 bg-white py-1 pl-1 pr-2.5 shadow-xs hover:bg-[#112218]/5"
           >
-            <GolferAvatar avatarSeed={avatarSeed} displayName={displayName} size="xs" />
+            {friendRequests > 0 && (
+              <span className="absolute -left-1 -top-1 z-10 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold text-white">
+                {friendRequests}
+              </span>
+            )}
+            <GolferAvatar avatarSeed={avatarSeed} wins={wins} displayName={displayName} size="xs" />
             <span className="hidden max-w-[110px] truncate text-xs font-semibold sm:inline">
               {displayName}
             </span>
@@ -84,7 +99,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
               className="absolute right-0 mt-2 w-64 overflow-hidden rounded-2xl border border-[#112218]/10 bg-white p-2 shadow-xl"
             >
               <div className="mb-1 flex items-center gap-3 rounded-xl bg-[#112218] px-3 py-3 text-[#F6F4EE]">
-                <GolferAvatar avatarSeed={avatarSeed} displayName={displayName} size="sm" />
+                <GolferAvatar avatarSeed={avatarSeed} wins={wins} displayName={displayName} size="sm" />
                 <div className="min-w-0">
                   <div className="truncate text-sm font-semibold">{displayName}</div>
                   <div className="text-xs text-[#D4AF37]">HCP {handicap}</div>
@@ -93,12 +108,23 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
               <button type="button" role="menuitem" className={itemClass} onClick={pick(onOpenMyProfile)}>
                 <UserRound className="h-4 w-4 text-[#166534]" /> Min profil
               </button>
+              <button type="button" role="menuitem" className={itemClass} onClick={pick(onOpenFriends)}>
+                <UserPlus className="h-4 w-4 text-[#166534]" /> Vänner
+                {friendRequests > 0 && (
+                  <span className="ml-auto rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-bold text-white">{friendRequests} ny</span>
+                )}
+              </button>
               <button type="button" role="menuitem" className={itemClass} onClick={pick(onOpenPlayers)}>
                 <Users className="h-4 w-4 text-[#166534]" /> Andras profiler
               </button>
               <button type="button" role="menuitem" className={itemClass} onClick={pick(onOpenAbout)}>
                 <Info className="h-4 w-4 text-[#166534]" /> Om sidan
               </button>
+              {isAdmin && (
+                <button type="button" role="menuitem" className={itemClass} onClick={pick(onOpenAdmin)}>
+                  <ShieldCheck className="h-4 w-4 text-[#D4AF37]" /> Admin
+                </button>
+              )}
               <div className="my-1 border-t border-[#112218]/10" />
               <button type="button" role="menuitem" className={itemClass} onClick={pick(onSignOut)}>
                 <LogOut className="h-4 w-4 text-red-700" /> Logga ut

@@ -235,7 +235,7 @@ export const RoundView: React.FC<RoundViewProps> = ({
       {/* Min score */}
       <section className={`rounded-3xl border border-[#112218]/10 bg-white p-5 shadow-xs ${readOnly ? 'pointer-events-none opacity-60' : ''}`}>
         <div className="flex items-center gap-3">
-          <GolferAvatar avatarSeed={me.avatarSeed} displayName={me.displayName} size="sm" />
+          <GolferAvatar avatarSeed={me.avatarSeed} wins={me.wins} displayName={me.displayName} size="sm" />
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-semibold text-[#112218]">Din score på hål {hole.holeNumber}</div>
             <div className="text-xs text-[#112218]/60">
@@ -310,7 +310,7 @@ export const RoundView: React.FC<RoundViewProps> = ({
             <li key={e.player.uid}
               className={`flex items-center gap-3 rounded-xl px-2 py-1.5 ${e.player.uid === me.uid ? 'bg-[#D4AF37]/15' : ''}`}>
               <span className="w-7 text-center font-mono text-sm font-bold text-[#112218]/70">{e.positionLabel}</span>
-              <GolferAvatar avatarSeed={e.player.avatarSeed} displayName={e.player.displayName} size="xs" />
+              <GolferAvatar avatarSeed={e.player.avatarSeed} wins={e.player.wins} displayName={e.player.displayName} size="xs" />
               <span className="min-w-0 flex-1 truncate text-sm font-medium text-[#112218]">{e.player.displayName}</span>
               <span className="text-xs text-[#112218]/50">Thru {e.summary.thruHoles}</span>
               <span className="w-10 text-right font-mono text-sm font-bold text-[#112218]">{e.summary.toParFormatted}</span>

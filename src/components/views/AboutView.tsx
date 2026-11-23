@@ -21,7 +21,10 @@ export const AboutView: React.FC<{ onBack: () => void }> = ({ onBack }) => (
         <li>En bana är banguiden: pubar, dryck, par och regler. Öppna banor kan alla spela.</li>
         <li>En runda är när ni spelar banan. Den som startar rundan får en privat kod att dela, kan lägga till spelare med spelar-ID och låsa rundan.</li>
         <li>Rundor du inte vill ska räknas kan du ta bort ur ditt HCP.</li>
-        <li>Ditt HCP räknas ut automatiskt från snittet mot par i dina tidigare rundor.</li>
+        <li>Alla börjar på HCP 54. Sedan räknas det ut från dina bästa hela rundor (alla 9 hål), omräknat till 18 hål. Under 10 = singel, och då låses den vita tourpikén upp.</li>
+        <li>Vinner du en runda (lägst score bland dem som spelat klart, minst två) får du en guldstjärna – större vid 5, 10 och 20 vinster.</li>
+        <li>Gear låses upp när du spelar: putter, flaggstång, paraply, guldklubba (10 eagles), Claret Jug (vinst) och guldboll med antal hole-in-ones.</li>
+        <li>Lägg till vänner med spelar-ID. Godkänner de blir ni vänner, annars följer du dem.</li>
       </ul>
       <h2 className="pt-2 font-display text-lg font-bold text-[#112218]">Drick ansvarsfullt</h2>
       <p>

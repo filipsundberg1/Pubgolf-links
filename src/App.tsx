@@ -16,6 +16,7 @@ import {
   arrayRemove,
   arrayUnion,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -38,6 +39,7 @@ import {
   OperationType,
 } from './lib/firebase';
 import {
+  ADMIN_UIDS,
   APP_ID,
   ROUND_CODE_PATTERN,
   buildScoreCelebrationClip,
@@ -47,9 +49,15 @@ import {
   generateInviteCode,
   generatePlayerCode,
   generateRoundCode,
+  isGearUnlocked,
   mergeTourProfiles,
+  parseAvatarSeed,
+  serializeAvatarConfig,
+  STARTING_HANDICAP,
+  formatHandicap,
   normalizePlayerCode,
   roundAsCourse,
+  type FollowEdge,
   type PlayerCareerStats,
   type PlayerTourProfile,
   type PubCourse,
@@ -84,6 +92,8 @@ import { RoundView } from './components/views/RoundView';
 import { RoundManageSheet } from './components/views/RoundManageSheet';
 import { MyProfileView, withProfileDefaults, type ProfileHistoryEntry } from './components/views/MyProfileView';
 import { AboutView } from './components/views/AboutView';
+import { FriendsView } from './components/views/FriendsView';
+import { AdminView } from './components/views/AdminView';
 
 // Laddas först när de behövs
 const PgaPlayersView = lazy(() => import('./components/PgaPlayersView').then((m) => ({ default: m.PgaPlayersView })));
@@ -91,7 +101,7 @@ const BowlingScoreAnimationOverlay = lazy(() =>
   import('./components/BowlingScoreAnimationOverlay').then((m) => ({ default: m.BowlingScoreAnimationOverlay }))
 );
 
-type View = 'home' | 'create' | 'start' | 'play' | 'round' | 'profile' | 'players' | 'about';
+type View = 'home' | 'create' | 'start' | 'play' | 'round' | 'profile' | 'players' | 'about' | 'friends' | 'admin';
 
 type ProfileFieldsInput = {
   displayName: string;
@@ -147,6 +157,10 @@ export default function App() {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [deletedPromptBusy, setDeletedPromptBusy] = useState(false);
+  const [followsOut, setFollowsOut] = useState<FollowEdge[]>([]);
+  const [followsIn, setFollowsIn] = useState<FollowEdge[]>([]);
+  const [bannedUids, setBannedUids] = useState<Set<string>>(new Set());
+  const [adminRounds, setAdminRounds] = useState<PubRound[] | null>(null);
 
   useEffect(() => {
     const onSyncError = () =>
@@ -210,7 +224,7 @@ export default function App() {
       myProfileRef,
       (snap) => {
         if (snap.exists()) {
-          setMyProfile(parseProfile(snap.data()));
+          setMyProfile(parseProfile(snap.data({ serverTimestamps: 'estimate' })));
         } else {
           setMyProfile(null);
           // Första inloggningen: skapa en spelarprofil med namnet från Google
@@ -228,7 +242,7 @@ export default function App() {
                 homePub: 'Klubbhuset',
                 signatureDrink: 'Lager',
                 favoriteClub: 'Driver',
-                handicap: '0.0',
+                handicap: formatHandicap(STARTING_HANDICAP),
                 bio: 'Ny på touren.',
                 avatarSeed: 'emerald',
                 playerCode: generatePlayerCode(displayName),
@@ -244,7 +258,7 @@ export default function App() {
 
     const unsubAllProfiles = onSnapshot(
       query(collection(db, 'profiles'), where('appId', '==', APP_ID)),
-      (snap) => setAllProfiles(snap.docs.map((d) => parseProfile(d.data()))),
+      (snap) => setAllProfiles(snap.docs.map((d) => parseProfile(d.data({ serverTimestamps: 'estimate' })))),
       (err) => {
         if (!isPermissionError(err)) reportFirestoreError(err, OperationType.LIST, 'profiles');
       }
@@ -269,13 +283,53 @@ export default function App() {
       (err) => reportFirestoreError(err, OperationType.LIST, 'rounds')
     );
 
+    const parseFollow = (d: Record<string, unknown>): FollowEdge => ({
+      followerId: String(d.followerId),
+      targetId: String(d.targetId),
+      dismissed: d.dismissed === true,
+    });
+    const unsubFollowsOut = onSnapshot(
+      query(collection(db, 'follows'), where('followerId', '==', firebaseUser.uid)),
+      (snap) => setFollowsOut(snap.docs.map((d) => parseFollow(d.data()))),
+      (err) => {
+        if (!isPermissionError(err)) reportFirestoreError(err, OperationType.LIST, 'follows');
+      }
+    );
+    const unsubFollowsIn = onSnapshot(
+      query(collection(db, 'follows'), where('targetId', '==', firebaseUser.uid)),
+      (snap) => setFollowsIn(snap.docs.map((d) => parseFollow(d.data()))),
+      (err) => {
+        if (!isPermissionError(err)) reportFirestoreError(err, OperationType.LIST, 'follows');
+      }
+    );
+    const unsubBans = onSnapshot(
+      collection(db, 'bans'),
+      (snap) => setBannedUids(new Set(snap.docs.map((d) => d.id))),
+      () => setBannedUids(new Set())
+    );
+
     return () => {
       unsubProfile();
       unsubAllProfiles();
       unsubCourses();
       unsubRounds();
+      unsubFollowsOut();
+      unsubFollowsIn();
+      unsubBans();
     };
   }, [authReady, firebaseUser]);
+
+  // Admin: alla rundor, bara när admin-sidan är öppen
+  const isAdmin = !!firebaseUser && ADMIN_UIDS.includes(firebaseUser.uid);
+  useEffect(() => {
+    if (!isAdmin || view !== 'admin') return;
+    setAdminRounds(null);
+    return onSnapshot(
+      collection(db, 'rounds'),
+      (snap) => setAdminRounds(snap.docs.map((d) => parseRound(d.data()))),
+      (err) => reportFirestoreError(err, OperationType.LIST, 'rounds (admin)')
+    );
+  }, [isAdmin, view]);
 
   // Hål för alla banor (banguiden är läsbar för alla inloggade)
   const courseIdsKey = courses.map((c) => c.courseId).sort().join(',');
@@ -375,13 +429,22 @@ export default function App() {
   const careerStatsByUid: Record<string, PlayerCareerStats> = {};
   for (const uid of statsUids) {
     if (!uid) continue;
-    const stats = calculatePlayerCareerStats(uid, roundCourses, statsParticipantsByRound, holesByRoundId);
-    // Andra spelares rundor syns bara om man spelat med dem – visa då deras sparade HCP
-    const stored = profileByUid.get(uid)?.handicap;
-    careerStatsByUid[uid] =
-      uid !== currentUid && stats.roundsPlayed === 0 && stored ? { ...stats, computedHandicap: stored } : stats;
+    const stats = calculatePlayerCareerStats(uid, roundCourses, statsParticipantsByRound, holesByRoundId, participantsByRound);
+    // Andra spelares rundor syns bara om man spelat med dem – använd då deras sparade HCP/vinster
+    const prof = profileByUid.get(uid);
+    if (uid !== currentUid && prof) {
+      const storedWins = prof.wins || 0;
+      careerStatsByUid[uid] = {
+        ...stats,
+        ...(stats.completedRounds === 0 && prof.handicap ? { computedHandicap: prof.handicap } : {}),
+        wins: Math.max(stats.wins, storedWins),
+      };
+    } else {
+      careerStatsByUid[uid] = stats;
+    }
   }
-  const myComputedHandicap = careerStatsByUid[currentUid]?.computedHandicap || '0.0';
+  const myStats = careerStatsByUid[currentUid];
+  const myComputedHandicap = myStats?.computedHandicap || formatHandicap(STARTING_HANDICAP);
 
   const allDataLoaded =
     coursesLoaded &&
@@ -399,14 +462,22 @@ export default function App() {
     );
   }, [myProfile, allProfiles]);
 
-  // Håll profilens HCP i synk så att andra ser rätt HCP
+  // Håll profilens HCP, vinster och guldbollens siffra i synk så att andra ser rätt
+  const myWins = myStats?.wins || 0;
+  const myHoleInOnes = myStats?.careerHoleInOnes || 0;
   useEffect(() => {
     if (!myProfile || !myProfile.playerCode || !allDataLoaded) return;
-    if (myProfile.handicap === myComputedHandicap) return;
-    void setDoc(doc(db, 'profiles', myProfile.uid), profilePayload({ ...myProfile, handicap: myComputedHandicap })).catch(
-      (err) => console.error('Kunde inte uppdatera HCP', err)
-    );
-  }, [myProfile, myComputedHandicap, allDataLoaded]);
+    const avatar = parseAvatarSeed(myProfile.avatarSeed);
+    const ballOutOfDate = avatar.gear === 'ball' && avatar.ballCount !== myHoleInOnes && isGearUnlocked('ball', myStats);
+    const avatarSeed = ballOutOfDate ? serializeAvatarConfig({ ...avatar, ballCount: myHoleInOnes }) : myProfile.avatarSeed;
+    // Skriv även om profilen inte rörts på ett dygn, så admin ser "senast aktiv"
+    const stale = !myProfile.lastActiveMs || Date.now() - myProfile.lastActiveMs > 24 * 3600 * 1000;
+    if (myProfile.handicap === myComputedHandicap && (myProfile.wins || 0) === myWins && !ballOutOfDate && !stale) return;
+    void setDoc(
+      doc(db, 'profiles', myProfile.uid),
+      profilePayload({ ...myProfile, handicap: myComputedHandicap, wins: myWins, avatarSeed })
+    ).catch((err) => console.error('Kunde inte uppdatera profilen', err));
+  }, [myProfile, myComputedHandicap, myWins, myHoleInOnes, allDataLoaded]);
 
   // Flytta över gamla rundor (deltagare direkt under banan) till egna rundor. Körs av banans ägare.
   // Varje bana provas en gång per besök – även banor som dyker upp senare i listan.
@@ -576,6 +647,7 @@ export default function App() {
       avatarSeed: prof?.avatarSeed || p.avatarSeed,
       playerCode: prof?.playerCode || p.playerCode,
       handicap: careerStatsByUid[p.uid]?.computedHandicap || p.handicap,
+      wins: careerStatsByUid[p.uid]?.wins || prof?.wins || 0,
     };
   };
 
@@ -611,12 +683,12 @@ export default function App() {
       homePub: '',
       signatureDrink: '',
       favoriteClub: '',
-      handicap: '0.0',
+      handicap: formatHandicap(STARTING_HANDICAP),
       bio: '',
       avatarSeed: myProfileFields.avatarSeed,
     }),
     uid: playerUid,
-    handicap: careerStatsByUid[playerUid]?.computedHandicap || profile?.handicap || '0.0',
+    handicap: careerStatsByUid[playerUid]?.computedHandicap || profile?.handicap || formatHandicap(STARTING_HANDICAP),
     courseId: roundId,
     sips: [...EMPTY_SIPS],
     totalSips: 0,
@@ -679,6 +751,7 @@ export default function App() {
       ...fields,
       handicap: myComputedHandicap,
       playerCode: myProfile?.playerCode,
+      wins: myWins,
     };
     setMyProfile(nextProfile);
     try {
@@ -1032,6 +1105,117 @@ export default function App() {
     }
   };
 
+  // ---- Vänner ----
+  const followingIds = new Set(followsOut.map((f) => f.targetId));
+  const followerIds = new Set(followsIn.map((f) => f.followerId));
+  const profileList = (ids: Iterable<string>) =>
+    Array.from(ids)
+      .map((id) => profileByUid.get(id))
+      .filter((p): p is ReusablePlayerProfile => !!p)
+      .map((p) => ({ ...p, wins: careerStatsByUid[p.uid]?.wins || p.wins || 0 }))
+      .sort((a, b) => a.displayName.localeCompare(b.displayName, 'sv'));
+  const friends = profileList([...followingIds].filter((id) => followerIds.has(id)));
+  const followingOnly = profileList([...followingIds].filter((id) => !followerIds.has(id)));
+  const friendRequests = profileList(
+    followsIn.filter((f) => !f.dismissed && !followingIds.has(f.followerId)).map((f) => f.followerId)
+  );
+  const playedWith = new Set<string>();
+  for (const r of rounds) for (const p of participantsByRound[r.roundId] || []) playedWith.add(p.uid);
+  const friendSuggestions = profileList(
+    [...playedWith].filter((id) => id !== uid && !followingIds.has(id) && !followerIds.has(id))
+  );
+
+  const followRef = (follower: string, target: string) => doc(db, 'follows', `${follower}_${target}`);
+  const handleFollow = async (target: string) => {
+    if (target === uid || followingIds.has(target)) return;
+    try {
+      await setDoc(followRef(uid, target), {
+        followerId: uid,
+        targetId: target,
+        appId: APP_ID,
+        dismissed: false,
+        createdAt: serverTimestamp(),
+      });
+    } catch (error) {
+      fail(error, OperationType.CREATE, `follows/${uid}_${target}`);
+    }
+  };
+  const handleFollowByCode = async (raw: string): Promise<{ ok: boolean; message: string }> => {
+    const code = normalizePlayerCode(raw);
+    const target = allProfiles.find((p) => p.playerCode === code);
+    if (!target) return { ok: false, message: `Ingen spelare har ID ${code}.` };
+    if (target.uid === uid) return { ok: false, message: 'Det är ditt eget ID 🙂' };
+    if (followingIds.has(target.uid)) return { ok: false, message: `Du har redan lagt till ${target.displayName}.` };
+    try {
+      await handleFollow(target.uid);
+    } catch {
+      return { ok: false, message: 'Kunde inte lägga till. Försök igen.' };
+    }
+    return {
+      ok: true,
+      message: followerIds.has(target.uid)
+        ? `Du och ${target.displayName} är nu vänner!`
+        : `Förfrågan skickad – du följer ${target.displayName} tills hen godkänner.`,
+    };
+  };
+  const handleUnfollow = async (target: string) => {
+    try {
+      await deleteDoc(followRef(uid, target));
+    } catch (error) {
+      fail(error, OperationType.DELETE, `follows/${uid}_${target}`);
+    }
+  };
+  const handleRemoveFriend = async (other: string) => {
+    try {
+      const batch = writeBatch(db);
+      batch.delete(followRef(uid, other));
+      batch.delete(followRef(other, uid));
+      await batch.commit();
+    } catch (error) {
+      fail(error, OperationType.DELETE, `follows/${uid}_${other}`);
+    }
+  };
+  const handleDismissRequest = async (from: string) => {
+    try {
+      await updateDoc(followRef(from, uid), { dismissed: true });
+    } catch (error) {
+      fail(error, OperationType.UPDATE, `follows/${from}_${uid}`);
+    }
+  };
+
+  // ---- Admin ----
+  const handleToggleBan = async (target: string, ban: boolean) => {
+    if (!isAdmin) return;
+    if (ban) {
+      await setDoc(doc(db, 'bans', target), { uid: target, appId: APP_ID, bannedBy: uid, createdAt: serverTimestamp() });
+    } else {
+      await deleteDoc(doc(db, 'bans', target));
+    }
+  };
+  const handleAdminDeleteProfile = async (target: string) => {
+    if (!isAdmin) return;
+    await deleteDoc(doc(db, 'profiles', target));
+  };
+  const handleAdminDeleteRound = async (roundId: string) => {
+    if (!isAdmin) return;
+    const parts = await getDocs(collection(db, 'rounds', roundId, 'participants'));
+    const batch = writeBatch(db);
+    parts.docs.forEach((d) => batch.delete(d.ref));
+    batch.delete(roundRef(roundId));
+    await batch.commit();
+  };
+  const handleAdminDeleteCourse = async (courseId: string) => {
+    if (!isAdmin) return;
+    const holes = await getDocs(query(collection(db, 'courses', courseId, 'holes'), where('courseId', '==', courseId)));
+    const legacy = await getDocs(query(collection(db, 'courses', courseId, 'participants'), where('courseId', '==', courseId)));
+    const batch = writeBatch(db);
+    holes.docs.forEach((d) => batch.delete(d.ref));
+    legacy.docs.forEach((d) => batch.delete(d.ref));
+    batch.delete(doc(db, 'courses', courseId));
+    await batch.commit();
+  };
+  const amBanned = bannedUids.has(uid);
+
   const openRound = (roundId: string) => {
     setActiveRoundId(roundId);
     const mine = (participantsByRound[roundId] || []).find((p) => p.uid === uid);
@@ -1062,6 +1246,11 @@ export default function App() {
             </button>
           </div>
         )}
+        {amBanned && (
+          <div className="border-b border-red-200 bg-red-50 px-4 py-2.5 text-center text-xs font-semibold text-red-900">
+            Ditt konto är avstängt av en admin. Du kan inte skapa banor eller gå med i rundor.
+          </div>
+        )}
         {gmpQuotaExceeded && (
           <div className="border-b border-amber-200 bg-amber-50 px-4 py-2.5 text-center text-xs text-amber-900">
             Kartans gratiskvot är slut för idag – kartan kan saknas en stund.
@@ -1072,6 +1261,11 @@ export default function App() {
           displayName={myProfileFields.displayName}
           avatarSeed={myProfileFields.avatarSeed}
           handicap={myComputedHandicap}
+          wins={myWins}
+          friendRequests={friendRequests.length}
+          isAdmin={isAdmin}
+          onOpenFriends={() => setView('friends')}
+          onOpenAdmin={() => setView('admin')}
           onGoHome={() => setView('home')}
           onOpenMyProfile={() => setView('profile')}
           onOpenPlayers={() => {
@@ -1218,6 +1412,9 @@ export default function App() {
                     isCourseOwner={activeCourseDoc?.ownerId === uid}
                     onToggleLock={(locked) => updateRound(activeRound.roundId, { locked })}
                     onAddPlayer={(code) => handleAddPlayer(activeRound.roundId, code)}
+                    quickAdd={[...friends, ...followingOnly].filter(
+                      (p) => !activeRound.memberIds.includes(p.uid) && !!p.playerCode
+                    )}
                     onRemovePlayer={(playerUid) => handleRemovePlayer(activeRound.roundId, playerUid)}
                     onToggleCoursePublic={async (isPublic) => {
                       if (activeCourseDoc) await handleSaveCourseMeta({ ...activeCourseDoc, isPublic });
@@ -1271,6 +1468,48 @@ export default function App() {
           )}
 
           {view === 'about' && <AboutView onBack={() => setView('home')} />}
+
+          {view === 'friends' && (
+            <FriendsView
+              myPlayerCode={myPlayerCode}
+              friends={friends}
+              following={followingOnly}
+              requests={friendRequests}
+              suggestions={friendSuggestions}
+              handicapFor={(id) => careerStatsByUid[id]?.computedHandicap || profileByUid.get(id)?.handicap || '54.0'}
+              onBack={() => setView('home')}
+              onFollowByCode={handleFollowByCode}
+              onFollow={handleFollow}
+              onUnfollow={handleUnfollow}
+              onRemoveFriend={handleRemoveFriend}
+              onDismissRequest={handleDismissRequest}
+              onOpenPlayer={(id) => {
+                setSelectedPlayerUid(id);
+                setView('players');
+              }}
+            />
+          )}
+
+          {view === 'admin' && isAdmin && (
+            <AdminView
+              profiles={allProfiles.map((p) => ({ ...p, wins: careerStatsByUid[p.uid]?.wins || p.wins || 0 }))}
+              courses={courses}
+              rounds={adminRounds}
+              bannedUids={bannedUids}
+              adminUids={ADMIN_UIDS}
+              currentUid={uid}
+              handicapFor={(id) => careerStatsByUid[id]?.computedHandicap || profileByUid.get(id)?.handicap || '54.0'}
+              onBack={() => setView('home')}
+              onOpenPlayer={(id) => {
+                setSelectedPlayerUid(id);
+                setView('players');
+              }}
+              onToggleBan={handleToggleBan}
+              onDeleteProfile={handleAdminDeleteProfile}
+              onDeleteRound={handleAdminDeleteRound}
+              onDeleteCourse={handleAdminDeleteCourse}
+            />
+          )}
         </main>
       </div>
     </APIProvider>

@@ -187,7 +187,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
                     {brutalLeader.members.map((m) => (
                       <div key={m.player.uid} className="rounded-full ring-2 ring-[#112218]">
                         <GolferAvatar
-                          avatarSeed={m.player.avatarSeed}
+                          avatarSeed={m.player.avatarSeed} wins={m.player.wins}
                           displayName={m.player.displayName}
                           size="sm"
                           pose="celebrate"
@@ -236,7 +236,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
                 <div className="mt-4 sm:mt-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 rounded-xl border border-white/15 bg-white/5 p-3.5 sm:p-4">
                   <div className="flex items-center gap-3 min-w-0">
                     <GolferAvatar
-                      avatarSeed={singleLeader.player.avatarSeed}
+                      avatarSeed={singleLeader.player.avatarSeed} wins={singleLeader.player.wins}
                       displayName={singleLeader.player.displayName}
                       size="md"
                       pose="celebrate"
@@ -496,7 +496,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
                           {team.members.map((m) => (
                             <div key={m.player.uid} className="rounded-full ring-2 ring-white">
                               <GolferAvatar
-                                avatarSeed={m.player.avatarSeed}
+                                avatarSeed={m.player.avatarSeed} wins={m.player.wins}
                                 displayName={m.player.displayName}
                                 size="xs"
                               />
@@ -657,7 +657,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
                               {team.members.map((m) => (
                                 <div key={m.player.uid} className="rounded-full ring-2 ring-white">
                                   <GolferAvatar
-                                    avatarSeed={m.player.avatarSeed}
+                                    avatarSeed={m.player.avatarSeed} wins={m.player.wins}
                                     displayName={m.player.displayName}
                                     size="sm"
                                   />
@@ -763,7 +763,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
                         </div>
 
                         <GolferAvatar
-                          avatarSeed={entry.player.avatarSeed}
+                          avatarSeed={entry.player.avatarSeed} wins={entry.player.wins}
                           displayName={entry.player.displayName}
                           size="xs"
                         />
@@ -898,7 +898,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
                         <td className="px-3 py-3.5">
                           <div className="flex items-center gap-3">
                             <GolferAvatar
-                              avatarSeed={entry.player.avatarSeed}
+                              avatarSeed={entry.player.avatarSeed} wins={entry.player.wins}
                               displayName={entry.player.displayName}
                               size="sm"
                             />

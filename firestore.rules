@@ -19,6 +19,19 @@ service cloud.firestore {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
+    // Admins: Filip och Adam. Ändras bara här i reglerna.
+    function isAdmin() {
+      return isSignedIn() && request.auth.uid in [
+        'Xg358wyGpsNui9FLyOE4IL4xKqH2', // Filip Sundberg
+        '2qeuBiMqAVUTfWbL6JH5TGRw9BA3'  // Adam Larsson
+      ];
+    }
+
+    // Avstängda spelare kan inte skapa banor, rundor eller gå med i rundor.
+    function isBanned() {
+      return exists(/databases/$(database)/documents/bans/$(request.auth.uid));
+    }
+
     function incoming() {
       return request.resource.data;
     }
@@ -35,8 +48,9 @@ service cloud.firestore {
       ]) &&
       data.keys().hasOnly([
         'uid', 'appId', 'displayName', 'nickname', 'country', 'homePub',
-        'signatureDrink', 'favoriteClub', 'handicap', 'bio', 'avatarSeed', 'playerCode', 'updatedAt'
+        'signatureDrink', 'favoriteClub', 'handicap', 'bio', 'avatarSeed', 'playerCode', 'wins', 'updatedAt'
       ]) &&
+      (!('wins' in data) || (data.wins is int && data.wins >= 0 && data.wins <= 9999)) &&
       (!('playerCode' in data) || (data.playerCode is string && data.playerCode.matches('^[A-Z]{2}[0-9]{4}$'))) &&
       data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 &&
       data.uid.matches('^[a-zA-Z0-9_\\-]+$') &&
@@ -252,9 +266,10 @@ service cloud.firestore {
       // Anyone signed in who knows the code (= document id) may look the round up.
       allow get: if isSignedIn() && isValidId(roundId);
       // Listing only returns rounds you are a member of.
-      allow list: if isSignedIn() && request.auth.uid in resource.data.memberIds;
+      allow list: if isSignedIn() && (request.auth.uid in resource.data.memberIds || isAdmin());
 
       allow create: if isVerifiedUser() &&
+        !isBanned() &&
         isValidRound(incoming(), roundId) &&
         incoming().ownerId == request.auth.uid &&
         request.auth.uid in incoming().memberIds &&
@@ -274,6 +289,7 @@ service cloud.firestore {
           ) ||
           // Join with the code: only while active and unlocked, only adding yourself
           (
+            !isBanned() &&
             existing().status == 'active' &&
             existing().locked == false &&
             !(request.auth.uid in existing().memberIds) &&
@@ -288,7 +304,7 @@ service cloud.firestore {
           )
         );
 
-      allow delete: if isVerifiedUser() && existing().ownerId == request.auth.uid;
+      allow delete: if (isVerifiedUser() && existing().ownerId == request.auth.uid) || isAdmin();
 
       // Subcollection: /rounds/{roundId}/participants/{playerId}
       match /participants/{playerId} {
@@ -299,9 +315,10 @@ service cloud.firestore {
           return getAfter(/databases/$(database)/documents/rounds/$(roundId)).data;
         }
 
-        allow get, list: if isSignedIn() && request.auth.uid in roundData().memberIds;
+        allow get, list: if isSignedIn() && (isAdmin() || request.auth.uid in roundData().memberIds);
 
         allow create: if isVerifiedUser() &&
+          !isBanned() &&
           isValidId(playerId) &&
           isValidRoundParticipant(incoming(), roundId, playerId) &&
           playerId in roundDataAfter().memberIds &&
@@ -328,9 +345,49 @@ service cloud.firestore {
             )
           );
 
-        allow delete: if isVerifiedUser() &&
-          (existing().uid == request.auth.uid || roundData().ownerId == request.auth.uid);
+        allow delete: if (isVerifiedUser() &&
+          (existing().uid == request.auth.uid || roundData().ownerId == request.auth.uid)) || isAdmin();
       }
+    }
+
+    // Collection: /follows/{followerId_targetId} – vänner. Följer båda varandra = vänner.
+    match /follows/{followId} {
+      allow get, list: if isSignedIn();
+
+      allow create: if isVerifiedUser() &&
+        !isBanned() &&
+        incoming().keys().hasOnly(['followerId', 'targetId', 'appId', 'dismissed', 'createdAt']) &&
+        incoming().keys().hasAll(['followerId', 'targetId', 'appId', 'dismissed', 'createdAt']) &&
+        incoming().followerId == request.auth.uid &&
+        incoming().targetId is string &&
+        isValidId(incoming().targetId) &&
+        incoming().targetId != request.auth.uid &&
+        followId == incoming().followerId + '_' + incoming().targetId &&
+        incoming().appId == 'december-links' &&
+        incoming().dismissed == false &&
+        incoming().createdAt == request.time;
+
+      // Den som blir följd kan ignorera förfrågan
+      allow update: if isVerifiedUser() &&
+        existing().targetId == request.auth.uid &&
+        incoming().dismissed is bool &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['dismissed']);
+
+      // Båda parter kan ta bort (sluta följa / ta bort vän)
+      allow delete: if isVerifiedUser() &&
+        (existing().followerId == request.auth.uid || existing().targetId == request.auth.uid);
+    }
+
+    // Collection: /bans/{userId} – avstängda spelare. Bara admins skriver.
+    match /bans/{userId} {
+      allow get, list: if isSignedIn();
+      allow create: if isAdmin() &&
+        incoming().keys().hasOnly(['uid', 'appId', 'bannedBy', 'createdAt']) &&
+        incoming().uid == userId &&
+        incoming().appId == 'december-links' &&
+        incoming().bannedBy == request.auth.uid &&
+        incoming().createdAt == request.time;
+      allow delete: if isAdmin();
     }
 
     // Collection: /profiles/{userId}
@@ -339,6 +396,7 @@ service cloud.firestore {
       allow list: if isSignedIn() && existing().appId == 'december-links';
 
       allow create: if isVerifiedUser() &&
+        !isBanned() &&
         isValidId(userId) &&
         isValidProfile(incoming(), userId);
 
@@ -352,10 +410,10 @@ service cloud.firestore {
         (!('playerCode' in existing()) || incoming().playerCode == existing().playerCode) &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'displayName', 'nickname', 'country', 'homePub', 'signatureDrink',
-          'favoriteClub', 'handicap', 'bio', 'avatarSeed', 'playerCode', 'updatedAt'
+          'favoriteClub', 'handicap', 'bio', 'avatarSeed', 'playerCode', 'wins', 'updatedAt'
         ]);
 
-      allow delete: if false;
+      allow delete: if isAdmin();
     }
 
     // Collection: /courses/{courseId}
@@ -364,6 +422,7 @@ service cloud.firestore {
       allow list: if isSignedIn() && existing().appId == 'december-links';
 
       allow create: if isVerifiedUser() &&
+        !isBanned() &&
         isValidId(courseId) &&
         isValidCourse(incoming(), courseId);
 
@@ -379,9 +438,9 @@ service cloud.firestore {
           'title', 'subtitle', 'city', 'eventDate', 'ownerName', 'gameMode', 'isPublic', 'updatedAt'
         ]);
 
-      allow delete: if isVerifiedUser() &&
+      allow delete: if (isVerifiedUser() &&
         isValidId(courseId) &&
-        existing().ownerId == request.auth.uid;
+        existing().ownerId == request.auth.uid) || isAdmin();
 
       // Subcollection: /courses/{courseId}/holes/{holeId}
       match /holes/{holeId} {
@@ -415,7 +474,7 @@ service cloud.firestore {
             'caddieTip', 'updatedAt'
           ]);
 
-        allow delete: if false;
+        allow delete: if isAdmin();
       }
 
       // Subcollection: /courses/{courseId}/participants/{playerId}
@@ -478,7 +537,7 @@ service cloud.firestore {
             )
           );
 
-        allow delete: if isVerifiedUser() &&
+        allow delete: if isAdmin() || isVerifiedUser() &&
           isValidId(courseId) &&
           isValidId(playerId) &&
           existing().uid == request.auth.uid;

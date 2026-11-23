@@ -14,6 +14,11 @@ import {
   parseAvatarSeed,
   serializeAvatarConfig,
   isGearUnlocked,
+  isTopUnlocked,
+  winStarTier,
+  calculateHandicapIndex,
+  formatHandicap,
+  parseHandicap,
   GEAR_CATALOG,
   generatePlayerCode,
   generateRoundCode,
@@ -261,10 +266,11 @@ test('calculatePlayerCareerStats computes automatic handicap as average across p
     'round-2': mockHoles,
   };
 
-  // Unplayed player gets 0.0 handicap and 0 rounds played
+  // Unplayed player starts on 54.0 handicap and 0 rounds played
   const emptyStats = calculatePlayerCareerStats('u-new', courses, {}, holesByCourse);
   assert.equal(emptyStats.roundsPlayed, 0);
-  assert.equal(emptyStats.computedHandicap, '0.0');
+  assert.equal(emptyStats.computedHandicap, '54.0');
+  assert.equal(emptyStats.handicapIndex, 54);
   assert.equal(emptyStats.averageToPar, null);
 
   // Player u1: Round 1 is -3 (sips [3, 3, ...]), Round 2 is +1 (sips [5, 5, ...]) -> Average is (-3 + +1)/2 = -1.0
@@ -315,57 +321,103 @@ test('calculatePlayerCareerStats computes automatic handicap as average across p
   assert.equal(stats.roundsPlayed, 2);
   assert.equal(stats.totalHolesPlayed, 4);
   assert.equal(stats.averageToPar, -1);
-  assert.equal(stats.computedHandicap, '-1.0');
+  // Inga hela rundor (bara 2 hål) -> HCP står kvar på 54
+  assert.equal(stats.completedRounds, 0);
+  assert.equal(stats.computedHandicap, '54.0');
   assert.equal(stats.bestRound?.title, 'Södermalm Open');
   assert.equal(stats.bestRound?.toParFormatted, '-3');
 });
 
-test('parseAvatarSeed and serializeAvatarConfig support legacy themes and full 5-part custom golfer avatars', () => {
-  // Legacy single-word seed
+test('avatar seeds: legacy formats still parse and v2 round-trips every field', () => {
   const legacy = parseAvatarSeed('gold');
   assert.equal(legacy.jacket, 'gold');
   assert.equal(legacy.hat, 'flatcap');
-  assert.equal(legacy.pants, 'plaid');
-  assert.equal(legacy.skin, 'warm');
-  assert.equal(legacy.accessory, 'clean');
+  assert.equal(legacy.top, 'jacket');
+  assert.equal(legacy.eyes, 'none');
 
-  // Full custom avatar round-trip
+  const legacy5 = parseAvatarSeed('bg-bk-ld-dp-sg');
+  assert.equal(legacy5.jacket, 'burgundy');
+  assert.equal(legacy5.hat, 'bucket');
+  assert.equal(legacy5.pants, 'loud');
+  assert.equal(legacy5.skin, 'deep');
+  assert.equal(legacy5.eyes, 'sunglasses');
+  assert.equal(legacy5.mouth, 'none');
+  assert.equal(parseAvatarSeed('em-fc-pl-wm-cg-jg').mouth, 'cigar');
+  assert.equal(parseAvatarSeed('em-fc-pl-wm-cg-jg').gear, 'jug');
+  assert.equal(parseAvatarSeed('em-fc-pl-wm-bd').facialHair, 'beard');
+
   const custom = {
-    jacket: 'burgundy' as const,
-    hat: 'bucket' as const,
-    pants: 'loud' as const,
-    skin: 'deep' as const,
-    accessory: 'sunglasses' as const,
-    gear: 'driver' as const,
+    jacket: 'orange' as const, top: 'none' as const, hat: 'cowboy' as const, pants: 'jeans' as const,
+    skin: 'medium' as const, eyes: 'sunglasses' as const, facialHair: 'mustache' as const, mouth: 'cigar' as const,
+    hair: 'ginger' as const, gear: 'ball' as const, ballCount: 12,
   };
-  const serialized = serializeAvatarConfig(custom);
-  assert.equal(serialized, 'bg-bk-ld-dp-sg');
-  assert.equal(serialized.length <= 32, true);
-
-  const parsed = parseAvatarSeed(serialized);
-  assert.deepEqual(parsed, custom);
+  const seed = serializeAvatarConfig(custom);
+  assert.ok(seed.startsWith('2.'));
+  assert.ok(seed.length <= 32, seed);
+  assert.deepEqual(parseAvatarSeed(seed), custom);
+  // Bollräknaren sparas bara med guldbollen
+  assert.equal(parseAvatarSeed(serializeAvatarConfig({ ...custom, gear: 'driver' })).ballCount, 0);
 });
 
-test('avatar gear round-trips in the seed and unlocks from career stats', () => {
-  const withJug = serializeAvatarConfig({ ...parseAvatarSeed('bg-bk-ld-dp-sg'), gear: 'jug' });
-  assert.equal(withJug, 'bg-bk-ld-dp-sg-jg');
-  assert.equal(parseAvatarSeed(withJug).gear, 'jug');
-  assert.equal(parseAvatarSeed('bg-bk-ld-dp-sg').gear, 'driver');
-  assert.equal(parseAvatarSeed('bg-bk-ld-dp-sg-zz').gear, 'driver');
-
-  const rookie = { roundsPlayed: 0, careerBirdies: 0, careerEagles: 0, careerAcesAndAlbatrosses: 0 };
+test('gear and clothing unlock from career stats', () => {
+  const rookie = { roundsPlayed: 0, careerBirdies: 0, careerEaglesOrBetter: 0, careerHoleInOnes: 0, wins: 0, handicapIndex: 54 };
   assert.equal(isGearUnlocked('driver', null), true);
   assert.equal(isGearUnlocked('putter', rookie), false);
   assert.equal(isGearUnlocked('putter', null), false);
+  assert.equal(isTopUnlocked('whitepike', rookie), false);
+  assert.equal(isTopUnlocked('jacket', rookie), true);
 
-  const regular = { roundsPlayed: 3, careerBirdies: 9, careerEagles: 1, careerAcesAndAlbatrosses: 0 };
-  assert.equal(isGearUnlocked('putter', regular), true);
-  assert.equal(isGearUnlocked('umbrella', regular), true);
-  assert.equal(isGearUnlocked('flag', regular), true);
-  assert.equal(isGearUnlocked('golden', regular), true);
-  assert.equal(isGearUnlocked('jug', regular), true);
-  assert.equal(isGearUnlocked('golden', { ...regular, careerBirdies: 8 }), false);
-  assert.equal(GEAR_CATALOG.length, 6);
+  const pro = { roundsPlayed: 3, careerBirdies: 4, careerEaglesOrBetter: 10, careerHoleInOnes: 2, wins: 1, handicapIndex: 9.9 };
+  for (const g of GEAR_CATALOG) assert.equal(isGearUnlocked(g.id, pro), true, g.id);
+  assert.equal(isGearUnlocked('golden', { ...pro, careerEaglesOrBetter: 9 }), false);
+  assert.equal(isGearUnlocked('jug', { ...pro, wins: 0 }), false);
+  assert.equal(isGearUnlocked('ball', { ...pro, careerHoleInOnes: 0 }), false);
+  assert.equal(isTopUnlocked('whitepike', pro), true);
+  assert.equal(isTopUnlocked('whitepike', { ...pro, handicapIndex: 10 }), false);
+
+  assert.deepEqual([0, 1, 4, 5, 9, 10, 19, 20, 50].map(winStarTier), [0, 1, 1, 2, 2, 3, 3, 4, 4]);
+});
+
+test('handicap starts at 54 and follows the best complete rounds, WHS style', () => {
+  assert.equal(calculateHandicapIndex([]), 54);
+  assert.equal(calculateHandicapIndex([10]), 20);
+  assert.equal(calculateHandicapIndex([40]), 54);
+  assert.equal(calculateHandicapIndex([12, 4, 8]), 8);
+  assert.equal(calculateHandicapIndex([12, 4, 8, 6, 10, 3]), 7);
+  assert.equal(calculateHandicapIndex([-1]), -2);
+  assert.equal(formatHandicap(-2), '+2.0');
+  assert.equal(formatHandicap(12.44), '12.4');
+  assert.equal(formatHandicap(54), '54.0');
+  assert.equal(parseHandicap('+2.0'), -2);
+  assert.equal(parseHandicap('12.4'), 12.4);
+  assert.equal(parseHandicap(''), 54);
+});
+
+test('wins, hole-in-ones and eagles are counted from complete rounds', () => {
+  const holes = mockHoles.map((h) => ({ ...h, par: 4 }));
+  const course = (id: string): PubCourse => ({
+    courseId: id, appId: 'december-links', inviteCode: id, title: id, subtitle: '', city: 'Sthlm',
+    eventDate: '2026-11-0' + id.slice(-1), ownerId: 'a', ownerName: 'A',
+  });
+  const player = (uid: string, courseId: string, sips: number[]): PlayerTourProfile => ({
+    uid, appId: 'december-links', courseId, displayName: uid, nickname: '', country: '', homePub: '',
+    signatureDrink: '', favoriteClub: '', handicap: '54.0', bio: '', avatarSeed: 'emerald',
+    sips, totalSips: 0, totalToPar: 0, thruHoles: 9,
+  });
+  const parts = {
+    r1: [player('a', 'r1', [1, 2, 4, 4, 4, 4, 4, 4, 4]), player('b', 'r1', [4, 4, 4, 4, 4, 4, 4, 4, 4])],
+    r2: [player('a', 'r2', [4, 4, 4, 4, 4, 4, 4, 4, 5]), player('b', 'r2', [4, 4, 4, 4, 4, 4, 4, 4, 5])],
+    r3: [player('a', 'r3', [1, 1, 4, 4, 4, 4, 4, 4, 4])],
+  };
+  const holesBy = { r1: holes, r2: holes, r3: holes };
+  const stats = calculatePlayerCareerStats('a', [course('r1'), course('r2'), course('r3')], parts, holesBy);
+  assert.equal(stats.wins, 2); // r1 + delad r2; r3 ensam räknas inte
+  assert.equal(stats.careerHoleInOnes, 3);
+  assert.equal(stats.careerEaglesOrBetter, 4);
+  assert.equal(stats.completedRounds, 3);
+  assert.equal(stats.handicapIndex, -12);
+  assert.equal(stats.computedHandicap, '+12.0');
+  assert.equal(calculatePlayerCareerStats('b', [course('r1'), course('r2')], parts, holesBy).wins, 1);
 });
 
 test('buildScoreCelebrationClip generates celebratory bowling clips for Birdie/Ace and roasting clips for Bogey+', () => {

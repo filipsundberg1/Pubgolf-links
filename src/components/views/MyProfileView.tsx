@@ -85,7 +85,7 @@ export const MyProfileView: React.FC<MyProfileViewProps> = ({ profile, playerCod
       {/* Spelarkort */}
       <section className="overflow-hidden rounded-3xl bg-[#112218] text-[#F6F4EE] shadow-xl">
         <div className="flex items-center gap-4 p-5">
-          <GolferAvatar avatarSeed={draft.avatarSeed} displayName={draft.displayName} size="lg" />
+          <GolferAvatar avatarSeed={draft.avatarSeed} displayName={draft.displayName} size="lg" wins={stats?.wins || 0} />
           <div className="min-w-0 flex-1">
             <div className="text-xs font-semibold uppercase tracking-[0.2em] text-[#D4AF37]">Pubgolf Tour</div>
             <h1 className="truncate font-display text-2xl font-bold">{profile.displayName}</h1>
@@ -99,12 +99,13 @@ export const MyProfileView: React.FC<MyProfileViewProps> = ({ profile, playerCod
             <div className="font-mono text-3xl font-black">{stats?.computedHandicap || profile.handicap || '0.0'}</div>
           </div>
         </div>
-        <div className="grid grid-cols-4 divide-x divide-white/10 border-t border-white/10 py-3 text-center">
+        <div className="grid grid-cols-5 divide-x divide-white/10 border-t border-white/10 py-3 text-center">
           {[
             ['Rundor', stats?.roundsPlayed ?? 0],
+            ['Vinster', stats?.wins ?? 0],
             ['Birdies', stats?.careerBirdies ?? 0],
-            ['Eagles', stats?.careerEagles ?? 0],
-            ['Par', stats?.careerPars ?? 0],
+            ['Eagles', stats?.careerEaglesOrBetter ?? 0],
+            ['HIO', stats?.careerHoleInOnes ?? 0],
           ].map(([label, value]) => (
             <div key={label}>
               <div className="font-mono text-lg font-black">{value}</div>
@@ -145,7 +146,7 @@ export const MyProfileView: React.FC<MyProfileViewProps> = ({ profile, playerCod
             <div><label className={labelClass}>Stad</label><input className={inputClass} maxLength={50} value={draft.country} onChange={set('country')} /></div>
           </div>
           <div><label className={labelClass}>Om mig</label><textarea className={`${inputClass} min-h-[80px]`} maxLength={320} value={draft.bio} onChange={set('bio')} /></div>
-          <p className="text-xs text-[#112218]/55">HCP räknas ut automatiskt från dina rundor.</p>
+          <p className="text-xs text-[#112218]/55">Alla börjar på HCP 54. Det räknas sedan ut från dina bästa hela rundor (alla 9 hål), omräknat till 18 hål.</p>
         </section>
       )}
 
