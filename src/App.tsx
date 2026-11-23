@@ -254,7 +254,8 @@ export default function App() {
       query(collection(db, 'courses'), where('appId', '==', APP_ID)),
       (snap) => {
         setCourses(snap.docs.map((d) => parseCourse(d.data())));
-        setCoursesLoaded(true);
+        // Räkna banorna som laddade först när svaret kommer från servern (inte en tom cache)
+        if (!snap.metadata.fromCache) setCoursesLoaded(true);
       },
       (err) => reportFirestoreError(err, OperationType.LIST, 'courses')
     );
@@ -408,11 +409,18 @@ export default function App() {
   }, [myProfile, myComputedHandicap, allDataLoaded]);
 
   // Flytta över gamla rundor (deltagare direkt under banan) till egna rundor. Körs av banans ägare.
-  const migrationDoneRef = useRef(false);
+  // Varje bana provas en gång per besök – även banor som dyker upp senare i listan.
+  const migrationTriedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (!firebaseUser || !coursesLoaded || !myProfile || migrationDoneRef.current) return;
-    migrationDoneRef.current = true;
-    const mine = courses.filter((c) => c.ownerId === firebaseUser.uid && ROUND_CODE_PATTERN.test(c.inviteCode));
+    if (!firebaseUser || !coursesLoaded || !myProfile) return;
+    const mine = courses.filter(
+      (c) =>
+        c.ownerId === firebaseUser.uid &&
+        ROUND_CODE_PATTERN.test(c.inviteCode) &&
+        !migrationTriedRef.current.has(c.courseId)
+    );
+    if (mine.length === 0) return;
+    mine.forEach((c) => migrationTriedRef.current.add(c.courseId));
     void (async () => {
       for (const course of mine) {
         try {
@@ -452,6 +460,7 @@ export default function App() {
             batch.set(participantRef(course.inviteCode, p.uid), roundParticipantPayload(p, course.inviteCode, holes));
           }
           await batch.commit();
+          console.info('Flyttade över gammal runda', course.courseId, '->', course.inviteCode);
         } catch (err) {
           console.error('Kunde inte flytta över gammal runda', course.courseId, err);
         }
