@@ -109,9 +109,20 @@ export const AvatarHead: React.FC<{ config: AvatarConfig; expression: HeadExpres
   const isHappy = expression === 'ecstatic' || expression === 'happy';
   const isSad = expression === 'sweat' || expression === 'cry' || expression === 'dizzy';
   const hideEyes = config.eyes === 'sunglasses';
+  const female = config.body === 'female';
 
   return (
     <g>
+      {/* Långt hår bakom huvudet (kvinna) – syns även under hattar */}
+      {female && (
+        <path
+          d="M-18 -8 C-23 6, -22 20, -15 27 C-11 30, -6 28, -6 24 L6 24 C6 28, 11 30, 15 27 C22 20, 23 6, 18 -8 Z"
+          fill={hair}
+          stroke="#1b1917"
+          strokeWidth={strokeWidth * 0.6}
+        />
+      )}
+
       {/* Hals och öron */}
       <rect x="-6" y="9" width="12" height="10" rx="3" fill={skin.ear} />
       <circle cx="-17" cy="1" r="3.9" fill={skin.ear} />
@@ -145,17 +156,27 @@ export const AvatarHead: React.FC<{ config: AvatarConfig; expression: HeadExpres
         </g>
       )}
 
+      {/* Ögonfransar (kvinna) */}
+      {female && !hideEyes && expression !== 'dizzy' && (
+        <g stroke="#1b1917" strokeWidth="1.2" strokeLinecap="round">
+          <line x1="-10" y1="-3" x2="-12.2" y2="-4.8" />
+          <line x1="-9" y1="-3.8" x2="-10.4" y2="-6" />
+          <line x1="10" y1="-3" x2="12.2" y2="-4.8" />
+          <line x1="9" y1="-3.8" x2="10.4" y2="-6" />
+        </g>
+      )}
+
       {/* Ögonbryn i hårfärgen */}
       {!hideEyes &&
         (isSad ? (
           <>
-            <line x1="-12" y1="-5.5" x2="-4" y2="-7.5" stroke={hair} strokeWidth="1.9" strokeLinecap="round" />
-            <line x1="4" y1="-7.5" x2="12" y2="-5.5" stroke={hair} strokeWidth="1.9" strokeLinecap="round" />
+            <line x1="-12" y1="-5.5" x2="-4" y2="-7.5" stroke={hair} strokeWidth={female ? 1.3 : 1.9} strokeLinecap="round" />
+            <line x1="4" y1="-7.5" x2="12" y2="-5.5" stroke={hair} strokeWidth={female ? 1.3 : 1.9} strokeLinecap="round" />
           </>
         ) : (
           <>
-            <line x1="-12" y1="-6.5" x2="-4" y2="-7" stroke={hair} strokeWidth="1.9" strokeLinecap="round" />
-            <line x1="4" y1="-7" x2="12" y2="-6.5" stroke={hair} strokeWidth="1.9" strokeLinecap="round" />
+            <line x1="-12" y1="-6.5" x2="-4" y2="-7" stroke={hair} strokeWidth={female ? 1.3 : 1.9} strokeLinecap="round" />
+            <line x1="4" y1="-7" x2="12" y2="-6.5" stroke={hair} strokeWidth={female ? 1.3 : 1.9} strokeLinecap="round" />
           </>
         ))}
 
@@ -194,6 +215,8 @@ export const AvatarHead: React.FC<{ config: AvatarConfig; expression: HeadExpres
         <path d="M-8 7.5 Q0 14.5 8 7.5 Z" fill="#ffffff" stroke="#1b1917" strokeWidth="1.3" />
       ) : isSad ? (
         <path d="M-7 11.5 Q0 6 7 11.5" fill="none" stroke="#1b1917" strokeWidth="2" strokeLinecap="round" />
+      ) : female ? (
+        <path d="M-5.5 8.5 Q-2.5 7 0 8.2 Q2.5 7 5.5 8.5 Q0 12.5 -5.5 8.5 Z" fill="#c2415d" stroke="#7f1d2d" strokeWidth="0.8" />
       ) : (
         <path d="M-6 8.5 Q0 11.5 6 8.5" fill="none" stroke="#1b1917" strokeWidth="1.8" strokeLinecap="round" />
       )}
@@ -212,9 +235,12 @@ export const AvatarHead: React.FC<{ config: AvatarConfig; expression: HeadExpres
       )}
 
       {/* Hår (syns utan hatt och under solskärm) */}
-      {config.hat === 'none' && (
-        <path d="M-17 -8 C-18 -20, -5 -22, 5 -21 C14 -20, 18 -16, 17 -8 C12 -14, 3 -15, -6 -14 C-12 -13, -15 -11, -17 -8 Z" fill={hair} />
-      )}
+      {config.hat === 'none' &&
+        (female ? (
+          <path d="M-17.5 -4 C-19 -19, -6 -23, 4 -22 C15 -21, 19 -14, 17.5 -4 C15 -10, 9 -14, 2 -12 C-4 -15, -12 -12, -17.5 -4 Z" fill={hair} />
+        ) : (
+          <path d="M-17 -8 C-18 -20, -5 -22, 5 -21 C14 -20, 18 -16, 17 -8 C12 -14, 3 -15, -6 -14 C-12 -13, -15 -11, -17 -8 Z" fill={hair} />
+        ))}
       {config.hat === 'visor' && <path d="M-14 -14 C-10 -23, 10 -23, 14 -14 Z" fill={hair} />}
 
       {/* Hattar */}

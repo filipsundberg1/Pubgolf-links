@@ -2,7 +2,7 @@ import React, { useEffect, useId, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X } from 'lucide-react';
 import { SwingGear } from './AvatarGear';
-import { AvatarHead, PantsPattern, SKIN_PALETTE, topColors, type HeadExpression } from './avatarArt';
+import { AvatarHead, COLOR_PALETTE, PantsPattern, SKIN_PALETTE, topColors, type HeadExpression } from './avatarArt';
 import { parseAvatarSeed, type ScoreCelebrationClip } from '../utils/golfRules';
 
 interface BowlingScoreAnimationOverlayProps {
@@ -435,7 +435,10 @@ export const BowlingScoreAnimationOverlay: React.FC<BowlingScoreAnimationOverlay
                       <line x1="-16" y1="34" x2="16" y2="34" stroke={tops.accent} strokeWidth="1.4" opacity="0.7" />
                     </>
                   )}
-                  {config.top === 'none' && (
+                  {config.top === 'none' && config.body === 'female' && (
+                    <path d="M-19 10 C-12 5, -5 8, 0 11 C5 8, 12 5, 19 10 L20 22 C10 25, -10 25, -20 22 Z" fill={(COLOR_PALETTE[config.jacket] || COLOR_PALETTE.emerald).primary} stroke="#1b1917" strokeWidth="1.2" />
+                  )}
+                  {config.top === 'none' && config.body !== 'female' && (
                     <>
                       <circle cx="-8" cy="16" r="1.3" fill={skin.cheek} />
                       <circle cx="8" cy="16" r="1.3" fill={skin.cheek} />

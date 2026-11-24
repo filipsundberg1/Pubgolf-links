@@ -347,13 +347,20 @@ test('avatar seeds: legacy formats still parse and v2 round-trips every field', 
   assert.equal(parseAvatarSeed('em-fc-pl-wm-bd').facialHair, 'beard');
 
   const custom = {
+    body: 'female' as const,
     jacket: 'orange' as const, top: 'none' as const, hat: 'cowboy' as const, pants: 'jeans' as const,
     skin: 'medium' as const, eyes: 'sunglasses' as const, facialHair: 'mustache' as const, mouth: 'cigar' as const,
     hair: 'ginger' as const, gear: 'ball' as const, ballCount: 12,
   };
   const seed = serializeAvatarConfig(custom);
-  assert.ok(seed.startsWith('2.'));
+  assert.ok(seed.startsWith('3.'));
   assert.ok(seed.length <= 32, seed);
+  // v2-seeds (från igår) utan kön blir man
+  const v2 = parseAvatarSeed('2.orjkcbjnmdsgmscggihb12');
+  assert.equal(v2.body, 'male');
+  assert.equal(v2.hat, 'cowboy');
+  assert.equal(v2.ballCount, 12);
+  assert.equal(parseAvatarSeed('em-fc-pl-wm-cl').body, 'male');
   assert.deepEqual(parseAvatarSeed(seed), custom);
   // Bollräknaren sparas bara med guldbollen
   assert.equal(parseAvatarSeed(serializeAvatarConfig({ ...custom, gear: 'driver' })).ballCount, 0);

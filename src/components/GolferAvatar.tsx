@@ -21,6 +21,7 @@ import {
   serializeAvatarConfig,
   winStarTier,
   type AvatarAnimationPose,
+  type AvatarBody,
   type AvatarConfig,
   type EyeStyle,
   type FacialHair,
@@ -133,6 +134,19 @@ const PortraitTorso: React.FC<{ config: AvatarConfig }> = ({ config }) => {
     case 'none': {
       const skin = SKIN_PALETTE[config.skin] || SKIN_PALETTE.warm;
       const hair = (HAIR_PALETTE[config.hair] || HAIR_PALETTE.brown).color;
+      if (config.body === 'female') {
+        const color = COLOR_PALETTE[config.jacket] || COLOR_PALETTE.emerald;
+        return (
+          <g>
+            <path d={body} fill={skin.skin} stroke="#1b1917" strokeWidth="1.2" />
+            {/* Sporttopp */}
+            <path d="M31 57 C36 53, 43 55, 50 58 C57 55, 64 53, 69 57 L71 66 C63 68, 37 68, 29 66 Z" fill={color.primary} stroke="#1b1917" strokeWidth="1" />
+            <line x1="38" y1="53" x2="36" y2="57" stroke={color.primary} strokeWidth="2.4" />
+            <line x1="62" y1="53" x2="64" y2="57" stroke={color.primary} strokeWidth="2.4" />
+            <circle cx="50" cy="71" r="0.9" fill={skin.ear} />
+          </g>
+        );
+      }
       return (
         <g>
           <path d={body} fill={skin.skin} stroke="#1b1917" strokeWidth="1.2" />
@@ -272,6 +286,11 @@ interface AvatarCustomizerProps {
   unlockStats?: GearUnlockStats | null;
 }
 
+const BODY_OPTIONS: { id: AvatarBody; label: string }[] = [
+  { id: 'male', label: 'Man' },
+  { id: 'female', label: 'Kvinna' },
+];
+
 const COLOR_OPTIONS = (Object.keys(COLOR_PALETTE) as JacketTheme[]).map((id) => ({
   id,
   label: COLOR_PALETTE[id].label,
@@ -355,6 +374,23 @@ export const AvatarCustomizer: React.FC<AvatarCustomizerProps> = ({ value, onCha
           <p className="mt-0.5 text-xs text-[#54635b]">Kombinera fritt. Vissa saker låses upp när du spelar.</p>
         </div>
       </div>
+
+      <Section title="Kön">
+        <div className="grid grid-cols-2 gap-1.5">
+          {BODY_OPTIONS.map((opt) => (
+            <button key={opt.id} type="button" data-testid={`avatar-body-${opt.id}`}
+              onClick={() =>
+                update(
+                  // Byter man till kvinna tas skägget bort (går att lägga till igen)
+                  opt.id === 'female' && current.body !== 'female' ? { body: opt.id, facialHair: 'clean' } : { body: opt.id }
+                )
+              }
+              className={chipClass(current.body === opt.id)}>
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </Section>
 
       <Section title="Färg">
         <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-8">

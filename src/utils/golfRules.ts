@@ -1253,10 +1253,13 @@ export type FacialHair = 'clean' | 'stubble' | 'mustache' | 'beard';
 export type MouthItem = 'none' | 'cigar';
 export type HairColor = 'brown' | 'black' | 'blonde' | 'ginger' | 'grey';
 export type GearItem = 'driver' | 'putter' | 'flag' | 'umbrella' | 'golden' | 'jug' | 'ball';
+export type AvatarBody = 'male' | 'female';
 /** @deprecated Gamla avatarer hade ett enda tillbehör. Finns kvar för att läsa äldre seeds. */
 export type FaceAccessory = 'clean' | 'mustache' | 'beard' | 'sunglasses' | 'cigar';
 
 export interface AvatarConfig {
+  /** Kön: styr frisyr, ansiktsdrag och överdel utan tröja. */
+  body: AvatarBody;
   /** Färg på tröja/jacka (och keps). */
   jacket: JacketTheme;
   top: TopStyle;
@@ -1350,8 +1353,9 @@ export function winStarTier(wins: number | undefined): WinStarTier {
 }
 
 // --- Seed-format ---------------------------------------------------------
-// v2: "2." + tio fält à två tecken + ev. siffror för guldbollen, t.ex.
-// "2.emjkfcplwmsgclcgbrhb3" (max ~25 tecken, Firestore-regeln tillåter 32).
+// v3: "3." + elva fält à två tecken (färg, överdel, hatt, byxor, hud, ögon, skägg,
+// mun, hår, gear, kön) + ev. siffror för guldbollen, t.ex. "3.emjkfcplwmsgclcgbrhbfe3"
+// (max 27 tecken, Firestore-regeln tillåter 32). "2." (utan kön) läses fortfarande.
 
 const codeMap = <T extends string>(entries: Record<T, string>) => {
   const toCode = entries;
@@ -1373,12 +1377,14 @@ const FHAIR = codeMap<FacialHair>({ clean: 'cl', stubble: 'st', mustache: 'ms', 
 const MOUTH = codeMap<MouthItem>({ none: 'no', cigar: 'cg' });
 const HAIR = codeMap<HairColor>({ brown: 'br', black: 'bk', blonde: 'bl', ginger: 'gi', grey: 'gr' });
 const GEAR = codeMap<GearItem>({ driver: 'dr', putter: 'pt', flag: 'fl', umbrella: 'um', golden: 'gd', jug: 'jg', ball: 'hb' });
+const BODY = codeMap<AvatarBody>({ male: 'ma', female: 'fe' });
 const LEGACY_ACC: Record<string, FaceAccessory> = {
   cl: 'clean', clean: 'clean', ms: 'mustache', mustache: 'mustache', bd: 'beard', beard: 'beard',
   sg: 'sunglasses', sunglasses: 'sunglasses', cg: 'cigar', cigar: 'cigar',
 };
 
 export const DEFAULT_AVATAR: AvatarConfig = {
+  body: 'male',
   jacket: 'emerald',
   top: 'jacket',
   hat: 'flatcap',
@@ -1395,11 +1401,14 @@ export const DEFAULT_AVATAR: AvatarConfig = {
 export function parseAvatarSeed(seed?: string): AvatarConfig {
   const raw = (seed || 'emerald').trim().toLowerCase();
 
-  if (raw.startsWith('2.')) {
+  if (raw.startsWith('2.') || raw.startsWith('3.')) {
+    // v3 = v2 + kön som elfte fält
+    const isV3 = raw.startsWith('3.');
     const body = raw.slice(2);
     const f = (i: number) => body.slice(i * 2, i * 2 + 2);
-    const count = Number(body.slice(20));
+    const count = Number(body.slice(isV3 ? 22 : 20));
     return {
+      body: (isV3 && BODY.fromCode[f(10)]) || 'male',
       jacket: JACKET.fromCode[f(0)] || DEFAULT_AVATAR.jacket,
       top: TOP.fromCode[f(1)] || DEFAULT_AVATAR.top,
       hat: HAT.fromCode[f(2)] || DEFAULT_AVATAR.hat,
@@ -1444,7 +1453,7 @@ export function serializeAvatarConfig(config: AvatarConfig): string {
     HAIR.toCode[c.hair] +
     GEAR.toCode[c.gear];
   const count = c.gear === 'ball' && c.ballCount > 0 ? String(Math.min(999, Math.floor(c.ballCount))) : '';
-  return `2.${body}${count}`;
+  return `3.${body}${BODY.toCode[c.body] || 'ma'}${count}`;
 }
 
 export type AvatarAnimationPose =
