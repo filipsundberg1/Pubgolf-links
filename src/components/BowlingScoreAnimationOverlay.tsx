@@ -2,7 +2,7 @@ import React, { useEffect, useId, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X } from 'lucide-react';
 import { SwingGear } from './AvatarGear';
-import { AvatarHead, COLOR_PALETTE, PantsPattern, SKIN_PALETTE, topColors, type HeadExpression } from './avatarArt';
+import { AvatarHead, COLOR_PALETTE, PantsPattern, SKIN_PALETTE, isSkirt, topColors, type HeadExpression } from './avatarArt';
 import { parseAvatarSeed, type ScoreCelebrationClip } from '../utils/golfRules';
 
 interface BowlingScoreAnimationOverlayProps {
@@ -36,6 +36,8 @@ export const BowlingScoreAnimationOverlay: React.FC<BowlingScoreAnimationOverlay
 
   const config = parseAvatarSeed(clip.avatarSeed);
   const tops = topColors(config);
+  const female = config.body === 'female';
+  const skirt = isSkirt(config);
   const skin = SKIN_PALETTE[config.skin] || SKIN_PALETTE.warm;
 
   const key = clip.evalResult.key;
@@ -362,8 +364,8 @@ export const BowlingScoreAnimationOverlay: React.FC<BowlingScoreAnimationOverlay
                     width="13"
                     height="36"
                     rx="5"
-                    fill={`url(#actor-pants-${patternId})`}
-                    stroke="#0d1b15"
+                    fill={skirt ? skin.skin : `url(#actor-pants-${patternId})`}
+                    stroke={skirt ? '#1b1917' : '#0d1b15'}
                     strokeWidth="1.5"
                   />
                   {config.pants === 'shorts' && (
@@ -393,8 +395,8 @@ export const BowlingScoreAnimationOverlay: React.FC<BowlingScoreAnimationOverlay
                     width="13"
                     height="36"
                     rx="5"
-                    fill={`url(#actor-pants-${patternId})`}
-                    stroke="#0d1b15"
+                    fill={skirt ? skin.skin : `url(#actor-pants-${patternId})`}
+                    stroke={skirt ? '#1b1917' : '#0d1b15'}
                     strokeWidth="1.5"
                   />
                   {config.pants === 'shorts' && (
@@ -404,11 +406,24 @@ export const BowlingScoreAnimationOverlay: React.FC<BowlingScoreAnimationOverlay
                   <path d="M1 74 L17 74 L21 81 L0 81 Z" fill="#f8fafc" stroke="#0f172a" strokeWidth="1.5" />
                 </motion.g>
 
+                {/* Kjol eller klänningens kjoldel */}
+                {skirt && (
+                  <g>
+                    <path d="M-20 38 L20 38 L25 58 Q0 62 -25 58 Z"
+                      fill={config.top === 'dress' ? tops.body : `url(#actor-pants-${patternId})`}
+                      stroke="#0d1b15" strokeWidth="1.4" />
+                    {config.pants === 'skort' && config.top !== 'dress' &&
+                      [-12, -6, 0, 6, 12].map((x) => (
+                        <line key={x} x1={x} y1="41" x2={x * 1.2} y2="58" stroke="#cbd5e1" strokeWidth="1" />
+                      ))}
+                  </g>
+                )}
+
                 {/* Överkropp beroende på plagg */}
                 <g>
                   <path
-                    d="M-22 42 C-24 12, -16 0, 0 0 C16 0, 24 12, 22 42 Z"
-                    fill={config.top === 'sweater' ? '#f9f6f0' : tops.body}
+                    d={female ? 'M-19 42 C-21 26, -18 2, 0 1 C18 2, 21 26, 19 42 C10 36, -10 36, -19 42 Z' : 'M-22 42 C-24 12, -16 0, 0 0 C16 0, 24 12, 22 42 Z'}
+                    fill={config.top === 'sweater' || config.top === 'cardigan' ? '#f9f6f0' : tops.body}
                     stroke={tops.outline}
                     strokeWidth="1.6"
                   />
@@ -421,7 +436,7 @@ export const BowlingScoreAnimationOverlay: React.FC<BowlingScoreAnimationOverlay
                       <circle cx="11" cy="18" r="4" fill={tops.accent} />
                     </>
                   )}
-                  {(config.top === 'polo' || config.top === 'whitepike') && (
+                  {(config.top === 'polo' || config.top === 'whitepike' || config.top === 'ladypolo') && (
                     <>
                       <polygon points="-11,0 0,6 -7,10" fill={config.top === 'whitepike' ? '#ffffff' : tops.lapel} stroke={tops.outline} strokeWidth="0.9" />
                       <polygon points="11,0 0,6 7,10" fill={config.top === 'whitepike' ? '#ffffff' : tops.lapel} stroke={tops.outline} strokeWidth="0.9" />
@@ -435,8 +450,15 @@ export const BowlingScoreAnimationOverlay: React.FC<BowlingScoreAnimationOverlay
                       <line x1="-16" y1="34" x2="16" y2="34" stroke={tops.accent} strokeWidth="1.4" opacity="0.7" />
                     </>
                   )}
-                  {config.top === 'none' && config.body === 'female' && (
-                    <path d="M-19 10 C-12 5, -5 8, 0 11 C5 8, 12 5, 19 10 L20 22 C10 25, -10 25, -20 22 Z" fill={(COLOR_PALETTE[config.jacket] || COLOR_PALETTE.emerald).primary} stroke="#1b1917" strokeWidth="1.2" />
+                  {(config.top === 'sportstop' || (config.top === 'none' && female)) && (
+                    <path d="M-17 10 C-11 5, -5 8, 0 11 C5 8, 11 5, 17 10 L18 22 C9 25, -9 25, -18 22 Z" fill={(COLOR_PALETTE[config.jacket] || COLOR_PALETTE.emerald).primary} stroke="#1b1917" strokeWidth="1.2" />
+                  )}
+                  {config.top === 'dress' && <path d="M-7 1 L0 12 L7 1 Z" fill={skin.skin} />}
+                  {config.top === 'cardigan' && (
+                    <>
+                      <path d="M-19 42 C-21 26, -18 2, -6 1 L-3 38 Z" fill={tops.body} stroke={tops.outline} strokeWidth="1.2" />
+                      <path d="M19 42 C21 26, 18 2, 6 1 L3 38 Z" fill={tops.body} stroke={tops.outline} strokeWidth="1.2" />
+                    </>
                   )}
                   {config.top === 'none' && config.body !== 'female' && (
                     <>
@@ -445,9 +467,13 @@ export const BowlingScoreAnimationOverlay: React.FC<BowlingScoreAnimationOverlay
                       <circle cx="0" cy="32" r="1.1" fill={skin.ear} />
                     </>
                   )}
-                  {/* Bälte */}
-                  <rect x="-21" y="38" width="42" height="5.5" rx="2" fill="#2c1a11" />
-                  <rect x="-5" y="37.5" width="10" height="6.5" rx="1.2" fill="#c5a059" stroke="#141a17" strokeWidth="0.9" />
+                  {/* Bälte (inte på klänning) */}
+                  {config.top !== 'dress' && (
+                    <>
+                      <rect x={female ? -19 : -21} y="38" width={female ? 38 : 42} height="5.5" rx="2" fill="#2c1a11" />
+                      <rect x="-5" y="37.5" width="10" height="6.5" rx="1.2" fill="#c5a059" stroke="#141a17" strokeWidth="0.9" />
+                    </>
+                  )}
                 </g>
 
                 {/* LEFT ARM (Holds Foaming Pint Glass on Celebration/Par or Wipes Forehead on Bogey) */}

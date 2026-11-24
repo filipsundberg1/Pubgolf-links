@@ -4,6 +4,7 @@ import { PortraitGear, SwingGear } from './AvatarGear';
 import {
   AvatarHead,
   COLOR_PALETTE,
+  isSkirt,
   HAIR_PALETTE,
   PANTS_PALETTE,
   PantsPattern,
@@ -21,8 +22,12 @@ import {
   serializeAvatarConfig,
   winStarTier,
   type AvatarAnimationPose,
+  AVATAR_WARDROBE,
+  switchAvatarBody,
   type AvatarBody,
   type AvatarConfig,
+  type Earrings,
+  type HairStyle,
   type EyeStyle,
   type FacialHair,
   type GearUnlockStats,
@@ -30,7 +35,6 @@ import {
   type HatStyle,
   type JacketTheme,
   type MouthItem,
-  type PantsStyle,
   type SkinTone,
   type TopStyle,
 } from '../utils/golfRules';
@@ -106,6 +110,57 @@ const poseToExpression = (pose: AvatarAnimationPose): HeadExpression => {
 const PortraitTorso: React.FC<{ config: AvatarConfig }> = ({ config }) => {
   const c = topColors(config);
   const body = 'M24 75 C24 56, 33 50, 50 50 C67 50, 76 56, 76 75 Z';
+  // Damplagg: smalare, inskuren siluett
+  const fitted = 'M27 75 C26 63, 31 52, 50 51 C69 52, 74 63, 73 75 C66 70, 34 70, 27 75 Z';
+  const skin = SKIN_PALETTE[config.skin] || SKIN_PALETTE.warm;
+  if (config.body === 'female') {
+    switch (config.top) {
+      case 'dress':
+        return (
+          <g>
+            <path d={fitted} fill={c.body} stroke={c.outline} strokeWidth="1.2" />
+            <path d="M42 51 L50 61 L58 51 Z" fill={skin.skin} />
+            <path d="M33 70 Q50 74 67 70" fill="none" stroke={c.accent} strokeWidth="1.6" />
+          </g>
+        );
+      case 'cardigan':
+        return (
+          <g>
+            <path d={fitted} fill="#f9f6f0" stroke={c.outline} strokeWidth="1.2" />
+            <path d="M27 75 C26 63, 31 52, 44 51 L47 73 C40 72, 32 73, 27 75 Z" fill={c.body} stroke={c.outline} strokeWidth="1" />
+            <path d="M73 75 C74 63, 69 52, 56 51 L53 73 C60 72, 68 73, 73 75 Z" fill={c.body} stroke={c.outline} strokeWidth="1" />
+            {[58, 63, 68].map((y) => (
+              <circle key={y} cx="46" cy={y} r="1" fill={c.accent} />
+            ))}
+          </g>
+        );
+      case 'sportstop':
+      case 'none':
+        return (
+          <g>
+            <path d={fitted} fill={skin.skin} stroke="#1b1917" strokeWidth="1.2" />
+            <path d="M31 57 C36 53, 43 55, 50 58 C57 55, 64 53, 69 57 L71 66 C63 68, 37 68, 29 66 Z" fill={c.lapel} stroke="#1b1917" strokeWidth="1" />
+            <line x1="38" y1="53" x2="36" y2="57" stroke={c.lapel} strokeWidth="2.4" />
+            <line x1="62" y1="53" x2="64" y2="57" stroke={c.lapel} strokeWidth="2.4" />
+            <circle cx="50" cy="71" r="0.9" fill={skin.ear} />
+          </g>
+        );
+      case 'ladypolo':
+      case 'whitepike':
+      default: {
+        const white = config.top === 'whitepike';
+        return (
+          <g>
+            <path d={fitted} fill={c.body} stroke={c.outline} strokeWidth="1.2" />
+            <polygon points="42,51 50,56 45,59" fill={white ? '#ffffff' : c.lapel} stroke={c.outline} strokeWidth="0.8" />
+            <polygon points="58,51 50,56 55,59" fill={white ? '#ffffff' : c.lapel} stroke={c.outline} strokeWidth="0.8" />
+            <line x1="50" y1="56" x2="50" y2="63" stroke={c.outline} strokeWidth="0.9" />
+            <circle cx="61" cy="62" r="2.3" fill={c.accent} opacity="0.95" />
+          </g>
+        );
+      }
+    }
+  }
   switch (config.top) {
     case 'polo':
     case 'whitepike':
@@ -132,21 +187,7 @@ const PortraitTorso: React.FC<{ config: AvatarConfig }> = ({ config }) => {
         </g>
       );
     case 'none': {
-      const skin = SKIN_PALETTE[config.skin] || SKIN_PALETTE.warm;
       const hair = (HAIR_PALETTE[config.hair] || HAIR_PALETTE.brown).color;
-      if (config.body === 'female') {
-        const color = COLOR_PALETTE[config.jacket] || COLOR_PALETTE.emerald;
-        return (
-          <g>
-            <path d={body} fill={skin.skin} stroke="#1b1917" strokeWidth="1.2" />
-            {/* Sporttopp */}
-            <path d="M31 57 C36 53, 43 55, 50 58 C57 55, 64 53, 69 57 L71 66 C63 68, 37 68, 29 66 Z" fill={color.primary} stroke="#1b1917" strokeWidth="1" />
-            <line x1="38" y1="53" x2="36" y2="57" stroke={color.primary} strokeWidth="2.4" />
-            <line x1="62" y1="53" x2="64" y2="57" stroke={color.primary} strokeWidth="2.4" />
-            <circle cx="50" cy="71" r="0.9" fill={skin.ear} />
-          </g>
-        );
-      }
       return (
         <g>
           <path d={body} fill={skin.skin} stroke="#1b1917" strokeWidth="1.2" />
@@ -214,7 +255,25 @@ export const GolferAvatar: React.FC<GolferAvatarProps> = ({
         {/* Gear bakom kroppen (bryts vid katastrof) */}
         <PortraitGear gear={config.gear} snapped={pose === 'disaster'} ballCount={config.ballCount} />
 
-        {/* Byxor */}
+        {/* Kjol, klänning eller byxor */}
+        {isSkirt(config) ? (
+          <g>
+            <path d="M33 86 L47 86 L46 100 L32 100 Z" fill={skin.skin} stroke="#1b1917" strokeWidth="1" />
+            <path d="M53 86 L67 86 L68 100 L54 100 Z" fill={skin.skin} stroke="#1b1917" strokeWidth="1" />
+            {config.top === 'dress' ? (
+              <path d="M29 72 L71 72 L76 92 Q50 96 24 92 Z" fill={tops.body} stroke={tops.outline} strokeWidth="1.2" />
+            ) : (
+              <>
+                <path d="M31 73 L69 73 L73 91 Q50 94 27 91 Z" fill={`url(#pants-${uid})`} stroke="#0d1b15" strokeWidth="1.2" />
+                {config.pants === 'skort' &&
+                  [38, 44, 50, 56, 62].map((x) => (
+                    <line key={x} x1={x} y1="76" x2={x + (x - 50) * 0.12} y2="91" stroke="#cbd5e1" strokeWidth="0.9" />
+                  ))}
+                <rect x="31" y="72" width="38" height="3.5" rx="1.5" fill={tops.body} stroke="#0d1b15" strokeWidth="0.6" />
+              </>
+            )}
+          </g>
+        ) : (
         <g>
           <path d="M32 76 L68 76 L71 100 L53 100 L50 86 L47 100 L29 100 Z" fill={`url(#pants-${uid})`} stroke="#0d1b15" strokeWidth="1.2" />
           {config.pants === 'shorts' && (
@@ -229,6 +288,7 @@ export const GolferAvatar: React.FC<GolferAvatarProps> = ({
           <rect x="31" y="73" width="38" height="4.5" rx="1.5" fill="#2c1a11" />
           <rect x="46" y="72.5" width="8" height="5.5" rx="1" fill="#c5a059" stroke="#141a17" strokeWidth="0.8" />
         </g>
+        )}
 
         <PortraitTorso config={config} />
 
@@ -297,26 +357,46 @@ const COLOR_OPTIONS = (Object.keys(COLOR_PALETTE) as JacketTheme[]).map((id) => 
   swatch: COLOR_PALETTE[id].primary,
 }));
 
-const TOP_OPTIONS: { id: TopStyle; label: string }[] = [
-  { id: 'jacket', label: 'Klubbkavaj' },
-  { id: 'polo', label: 'Piké' },
-  { id: 'sweater', label: 'Pullover' },
-  { id: 'whitepike', label: 'Vit tourpiké' },
-  { id: 'none', label: 'Ingen tröja' },
-];
+const TOP_LABELS: Record<TopStyle, string> = {
+  jacket: 'Klubbkavaj',
+  polo: 'Piké',
+  sweater: 'Pullover',
+  whitepike: 'Vit tourpiké',
+  none: 'Ingen tröja',
+  dress: 'Golfklänning',
+  ladypolo: 'Dampiké',
+  cardigan: 'Kofta',
+  sportstop: 'Sporttopp',
+};
 
-const HAT_OPTIONS: { id: HatStyle; label: string }[] = [
-  { id: 'flatcap', label: 'Tweedkeps' },
-  { id: 'cap', label: 'Keps' },
-  { id: 'visor', label: 'Solskärm' },
-  { id: 'bucket', label: 'Bucket hat' },
-  { id: 'beanie', label: 'Toppluva' },
-  { id: 'cowboy', label: 'Cowboyhatt' },
-  { id: 'santa', label: 'Tomteluva' },
-  { id: 'none', label: 'Ingen' },
-];
+const HAT_LABELS: Record<HatStyle, string> = {
+  flatcap: 'Tweedkeps',
+  cap: 'Keps',
+  visor: 'Solskärm',
+  bucket: 'Bucket hat',
+  beanie: 'Toppluva',
+  cowboy: 'Cowboyhatt',
+  santa: 'Tomteluva',
+  none: 'Ingen',
+  sunhat: 'Solhatt',
+  beret: 'Basker',
+  headband: 'Pannband',
+};
 
-const PANTS_OPTIONS = (Object.keys(PANTS_PALETTE) as PantsStyle[]).map((id) => ({ id, label: PANTS_PALETTE[id].label }));
+const HAIRSTYLE_LABELS: Record<HairStyle, string> = {
+  short: 'Kort',
+  long: 'Långt',
+  ponytail: 'Hästsvans',
+  bun: 'Knut',
+  bob: 'Page',
+  braids: 'Flätor',
+};
+
+const EARRING_OPTIONS: { id: Earrings; label: string }[] = [
+  { id: 'none', label: 'Inga' },
+  { id: 'pearls', label: 'Pärlor' },
+  { id: 'hoops', label: 'Ringar' },
+];
 const SKIN_OPTIONS = (Object.keys(SKIN_PALETTE) as SkinTone[]).map((id) => ({ id, label: SKIN_PALETTE[id].label, swatch: SKIN_PALETTE[id].skin }));
 const HAIR_OPTIONS = (Object.keys(HAIR_PALETTE) as HairColor[]).map((id) => ({ id, label: HAIR_PALETTE[id].label, swatch: HAIR_PALETTE[id].color }));
 const EYE_OPTIONS: { id: EyeStyle; label: string }[] = [
@@ -360,6 +440,8 @@ export const AvatarCustomizer: React.FC<AvatarCustomizerProps> = ({ value, onCha
   const unlockedGear = GEAR_CATALOG.filter((g) => isGearUnlocked(g.id, stats)).length;
 
   const update = (patch: Partial<AvatarConfig>) => onChange(serializeAvatarConfig({ ...current, ...patch }));
+  const female = current.body === 'female';
+  const wardrobe = AVATAR_WARDROBE[current.body];
 
   return (
     <div data-testid="avatar-customizer" className="space-y-4 rounded-xl border border-[#d8d0c0] bg-[#f9f6f0] p-4">
@@ -379,12 +461,7 @@ export const AvatarCustomizer: React.FC<AvatarCustomizerProps> = ({ value, onCha
         <div className="grid grid-cols-2 gap-1.5">
           {BODY_OPTIONS.map((opt) => (
             <button key={opt.id} type="button" data-testid={`avatar-body-${opt.id}`}
-              onClick={() =>
-                update(
-                  // Byter man till kvinna tas skägget bort (går att lägga till igen)
-                  opt.id === 'female' && current.body !== 'female' ? { body: opt.id, facialHair: 'clean' } : { body: opt.id }
-                )
-              }
+              onClick={() => onChange(serializeAvatarConfig(switchAvatarBody(current, opt.id)))}
               className={chipClass(current.body === opt.id)}>
               {opt.label}
             </button>
@@ -405,7 +482,8 @@ export const AvatarCustomizer: React.FC<AvatarCustomizerProps> = ({ value, onCha
 
       <Section title="Överdel">
         <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-5">
-          {TOP_OPTIONS.map((opt) => {
+          {wardrobe.tops.map((id) => {
+            const opt = { id, label: TOP_LABELS[id] };
             const unlocked = isTopUnlocked(opt.id, stats);
             const rule = TOP_UNLOCKS[opt.id];
             return (
@@ -423,27 +501,42 @@ export const AvatarCustomizer: React.FC<AvatarCustomizerProps> = ({ value, onCha
         </div>
       </Section>
 
-      <Section title="Byxor">
-        <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-7">
-          {PANTS_OPTIONS.map((opt) => (
-            <button key={opt.id} type="button" data-testid={`avatar-pants-${opt.id}`}
-              onClick={() => update({ pants: opt.id })} className={chipClass(current.pants === opt.id)}>
-              {opt.label}
+      {!(female && current.top === 'dress') && (
+        <Section title={female ? 'Kjol & byxor' : 'Byxor'}>
+          <div className={`grid grid-cols-3 gap-1.5 ${female ? 'sm:grid-cols-5' : 'sm:grid-cols-7'}`}>
+            {wardrobe.bottoms.map((id) => (
+              <button key={id} type="button" data-testid={`avatar-pants-${id}`}
+                onClick={() => update({ pants: id })} className={chipClass(current.pants === id)}>
+                {PANTS_PALETTE[id].label}
+              </button>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      <Section title="Huvudbonad">
+        <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4">
+          {wardrobe.hats.map((id) => (
+            <button key={id} type="button" data-testid={`avatar-hat-${id}`}
+              onClick={() => update({ hat: id })} className={chipClass(current.hat === id)}>
+              {HAT_LABELS[id]}
             </button>
           ))}
         </div>
       </Section>
 
-      <Section title="Huvudbonad">
-        <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4">
-          {HAT_OPTIONS.map((opt) => (
-            <button key={opt.id} type="button" data-testid={`avatar-hat-${opt.id}`}
-              onClick={() => update({ hat: opt.id })} className={chipClass(current.hat === opt.id)}>
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      </Section>
+      {female && (
+        <Section title="Frisyr">
+          <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-5">
+            {wardrobe.hairStyles.map((id) => (
+              <button key={id} type="button" data-testid={`avatar-hairstyle-${id}`}
+                onClick={() => update({ hairStyle: id })} className={chipClass(current.hairStyle === id)}>
+                {HAIRSTYLE_LABELS[id]}
+              </button>
+            ))}
+          </div>
+        </Section>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Section title="Hårfärg">
@@ -478,15 +571,27 @@ export const AvatarCustomizer: React.FC<AvatarCustomizerProps> = ({ value, onCha
             ))}
           </div>
         </Section>
-        <Section title="Skägg">
-          <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-1">
-            {FACIAL_HAIR_OPTIONS.map((opt) => (
-              <button key={opt.id} type="button" onClick={() => update({ facialHair: opt.id })} className={chipClass(current.facialHair === opt.id)}>
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </Section>
+        {female ? (
+          <Section title="Örhängen">
+            <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-1">
+              {EARRING_OPTIONS.map((opt) => (
+                <button key={opt.id} type="button" onClick={() => update({ earrings: opt.id })} className={chipClass(current.earrings === opt.id)}>
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </Section>
+        ) : (
+          <Section title="Skägg">
+            <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-1">
+              {FACIAL_HAIR_OPTIONS.map((opt) => (
+                <button key={opt.id} type="button" onClick={() => update({ facialHair: opt.id })} className={chipClass(current.facialHair === opt.id)}>
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </Section>
+        )}
         <Section title="I munnen">
           <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-1">
             {MOUTH_OPTIONS.map((opt) => (

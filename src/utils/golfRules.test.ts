@@ -15,6 +15,8 @@ import {
   serializeAvatarConfig,
   isGearUnlocked,
   isTopUnlocked,
+  switchAvatarBody,
+  AVATAR_WARDROBE,
   winStarTier,
   calculateHandicapIndex,
   formatHandicap,
@@ -348,22 +350,45 @@ test('avatar seeds: legacy formats still parse and v2 round-trips every field', 
 
   const custom = {
     body: 'female' as const,
-    jacket: 'orange' as const, top: 'none' as const, hat: 'cowboy' as const, pants: 'jeans' as const,
+    jacket: 'orange' as const, top: 'dress' as const, hat: 'sunhat' as const, pants: 'jeans' as const,
     skin: 'medium' as const, eyes: 'sunglasses' as const, facialHair: 'mustache' as const, mouth: 'cigar' as const,
-    hair: 'ginger' as const, gear: 'ball' as const, ballCount: 12,
+    hair: 'ginger' as const, hairStyle: 'braids' as const, earrings: 'hoops' as const, gear: 'ball' as const, ballCount: 999,
   };
   const seed = serializeAvatarConfig(custom);
-  assert.ok(seed.startsWith('3.'));
+  assert.ok(seed.startsWith('4.'));
   assert.ok(seed.length <= 32, seed);
+  assert.deepEqual(parseAvatarSeed(seed), custom);
+  // Bollräknaren sparas bara med guldbollen
+  assert.equal(parseAvatarSeed(serializeAvatarConfig({ ...custom, gear: 'driver' })).ballCount, 0);
   // v2-seeds (från igår) utan kön blir man
   const v2 = parseAvatarSeed('2.orjkcbjnmdsgmscggihb12');
   assert.equal(v2.body, 'male');
   assert.equal(v2.hat, 'cowboy');
   assert.equal(v2.ballCount, 12);
   assert.equal(parseAvatarSeed('em-fc-pl-wm-cl').body, 'male');
-  assert.deepEqual(parseAvatarSeed(seed), custom);
-  // Bollräknaren sparas bara med guldbollen
-  assert.equal(parseAvatarSeed(serializeAvatarConfig({ ...custom, gear: 'driver' })).ballCount, 0);
+  // v3-dam utan tröja -> sporttopp, långt hår
+  const v3 = parseAvatarSeed('3.skno' + 'vsshdpsgclnoblhb' + 'fe');
+  assert.equal(v3.body, 'female');
+  assert.equal(v3.top, 'sportstop');
+  assert.equal(v3.hairStyle, 'long');
+});
+
+test('switching gender swaps to that wardrobe and keeps colours and gear', () => {
+  const man = { ...parseAvatarSeed('em-cb-jn-md-sg-jg'), jacket: 'pink' as const, hair: 'blonde' as const, facialHair: 'beard' as const };
+  const woman = switchAvatarBody(man, 'female');
+  assert.equal(woman.body, 'female');
+  assert.ok(AVATAR_WARDROBE.female.tops.includes(woman.top));
+  assert.ok(AVATAR_WARDROBE.female.hats.includes(woman.hat));
+  assert.equal(woman.pants, 'jeans'); // jeans finns i båda
+  assert.equal(woman.facialHair, 'clean');
+  assert.equal(woman.jacket, 'pink');
+  assert.equal(woman.hair, 'blonde');
+  assert.equal(woman.gear, 'jug');
+  const back = switchAvatarBody({ ...woman, top: 'dress', hat: 'beret' }, 'male');
+  assert.ok(AVATAR_WARDROBE.male.tops.includes(back.top));
+  assert.ok(AVATAR_WARDROBE.male.hats.includes(back.hat));
+  assert.equal(back.hairStyle, 'short');
+  assert.equal(back.earrings, 'none');
 });
 
 test('gear and clothing unlock from career stats', () => {

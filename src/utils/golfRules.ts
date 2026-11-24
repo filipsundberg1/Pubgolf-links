@@ -1244,9 +1244,15 @@ export function validatePlayerProfileInput(input: {
 }
 
 export type JacketTheme = 'emerald' | 'gold' | 'navy' | 'burgundy' | 'slate' | 'pink' | 'sky' | 'orange';
-export type TopStyle = 'jacket' | 'polo' | 'sweater' | 'whitepike' | 'none';
-export type HatStyle = 'flatcap' | 'visor' | 'cap' | 'bucket' | 'beanie' | 'cowboy' | 'santa' | 'none';
-export type PantsStyle = 'plaid' | 'chino' | 'navy' | 'loud' | 'corduroy' | 'jeans' | 'shorts';
+/** Herr: jacket, polo, sweater, whitepike, none. Dam: dress, ladypolo, cardigan, whitepike, sportstop. */
+export type TopStyle = 'jacket' | 'polo' | 'sweater' | 'whitepike' | 'none' | 'dress' | 'ladypolo' | 'cardigan' | 'sportstop';
+export type HatStyle =
+  | 'flatcap' | 'visor' | 'cap' | 'bucket' | 'beanie' | 'cowboy' | 'santa' | 'none'
+  | 'sunhat' | 'beret' | 'headband';
+/** Herr: byxor/shorts. Dam: kjolar, shorts, jeans, chinos. */
+export type PantsStyle = 'plaid' | 'chino' | 'navy' | 'loud' | 'corduroy' | 'jeans' | 'shorts' | 'skort' | 'plaidskirt';
+export type HairStyle = 'short' | 'long' | 'ponytail' | 'bun' | 'bob' | 'braids';
+export type Earrings = 'none' | 'pearls' | 'hoops';
 export type SkinTone = 'light' | 'warm' | 'medium' | 'deep';
 export type EyeStyle = 'none' | 'sunglasses' | 'glasses';
 export type FacialHair = 'clean' | 'stubble' | 'mustache' | 'beard';
@@ -1270,9 +1276,56 @@ export interface AvatarConfig {
   facialHair: FacialHair;
   mouth: MouthItem;
   hair: HairColor;
+  /** Frisyr (dam). Herr har alltid kort hår. */
+  hairStyle: HairStyle;
+  /** Örhängen (dam). */
+  earrings: Earrings;
   gear: GearItem;
   /** Antal hole-in-ones som visas på guldbollen. */
   ballCount: number;
+}
+
+/** Herr- och damgarderob: varje kön har egna val i avatarredigeraren. */
+export const AVATAR_WARDROBE: Record<
+  AvatarBody,
+  { tops: TopStyle[]; bottoms: PantsStyle[]; hats: HatStyle[]; hairStyles: HairStyle[] }
+> = {
+  male: {
+    tops: ['jacket', 'polo', 'sweater', 'whitepike', 'none'],
+    bottoms: ['plaid', 'chino', 'navy', 'loud', 'corduroy', 'jeans', 'shorts'],
+    hats: ['flatcap', 'cap', 'visor', 'bucket', 'beanie', 'cowboy', 'santa', 'none'],
+    hairStyles: ['short'],
+  },
+  female: {
+    tops: ['dress', 'ladypolo', 'cardigan', 'whitepike', 'sportstop'],
+    bottoms: ['skort', 'plaidskirt', 'shorts', 'jeans', 'chino'],
+    hats: ['visor', 'cap', 'sunhat', 'beret', 'headband', 'santa', 'none'],
+    hairStyles: ['long', 'ponytail', 'bun', 'bob', 'braids'],
+  },
+};
+
+/** Det man får när man byter kön i redigeraren (färg, hud, hårfärg, ögon, mun och gear behålls). */
+export const BODY_DEFAULTS: Record<AvatarBody, Pick<AvatarConfig, 'top' | 'pants' | 'hat' | 'hairStyle' | 'earrings' | 'facialHair'>> = {
+  male: { top: 'jacket', pants: 'plaid', hat: 'flatcap', hairStyle: 'short', earrings: 'none', facialHair: 'clean' },
+  female: { top: 'ladypolo', pants: 'skort', hat: 'visor', hairStyle: 'ponytail', earrings: 'pearls', facialHair: 'clean' },
+};
+
+/** Byter kön och ersätter allt som inte finns i den nya garderoben. */
+export function switchAvatarBody(config: AvatarConfig, body: AvatarBody): AvatarConfig {
+  if (config.body === body) return config;
+  const w = AVATAR_WARDROBE[body];
+  const d = BODY_DEFAULTS[body];
+  return {
+    ...config,
+    body,
+    // Vit tourpiké finns i båda garderoberna och behålls
+    top: w.tops.includes(config.top) ? config.top : d.top,
+    pants: w.bottoms.includes(config.pants) ? config.pants : d.pants,
+    hat: w.hats.includes(config.hat) ? config.hat : d.hat,
+    hairStyle: d.hairStyle,
+    earrings: d.earrings,
+    facialHair: body === 'female' ? 'clean' : config.facialHair,
+  };
 }
 
 /** Statistik som låser upp gear och kläder (delmängd av PlayerCareerStats). */
@@ -1353,9 +1406,9 @@ export function winStarTier(wins: number | undefined): WinStarTier {
 }
 
 // --- Seed-format ---------------------------------------------------------
-// v3: "3." + elva fält à två tecken (färg, överdel, hatt, byxor, hud, ögon, skägg,
-// mun, hår, gear, kön) + ev. siffror för guldbollen, t.ex. "3.emjkfcplwmsgclcgbrhbfe3"
-// (max 27 tecken, Firestore-regeln tillåter 32). "2." (utan kön) läses fortfarande.
+// v4: "4." + 13 fält à två tecken (färg, överdel, hatt, byxor, hud, ögon, skägg, mun,
+// hårfärg, gear, kön, frisyr, örhängen) + ev. siffror för guldbollen (max 31 tecken,
+// Firestore-regeln tillåter 32). "2." och "3." läses fortfarande.
 
 const codeMap = <T extends string>(entries: Record<T, string>) => {
   const toCode = entries;
@@ -1368,9 +1421,19 @@ const codeMap = <T extends string>(entries: Record<T, string>) => {
 };
 
 const JACKET = codeMap<JacketTheme>({ emerald: 'em', gold: 'go', navy: 'nv', burgundy: 'bg', slate: 'sl', pink: 'pk', sky: 'sk', orange: 'or' });
-const TOP = codeMap<TopStyle>({ jacket: 'jk', polo: 'po', sweater: 'sw', whitepike: 'wp', none: 'no' });
-const HAT = codeMap<HatStyle>({ flatcap: 'fc', visor: 'vs', cap: 'cp', bucket: 'bk', beanie: 'bn', cowboy: 'cb', santa: 'sa', none: 'no' });
-const PANTS = codeMap<PantsStyle>({ plaid: 'pl', chino: 'ch', navy: 'nv', loud: 'ld', corduroy: 'cd', jeans: 'jn', shorts: 'sh' });
+const TOP = codeMap<TopStyle>({
+  jacket: 'jk', polo: 'po', sweater: 'sw', whitepike: 'wp', none: 'no',
+  dress: 'dr', ladypolo: 'lp', cardigan: 'ca', sportstop: 'st',
+});
+const HAT = codeMap<HatStyle>({
+  flatcap: 'fc', visor: 'vs', cap: 'cp', bucket: 'bk', beanie: 'bn', cowboy: 'cb', santa: 'sa', none: 'no',
+  sunhat: 'sh', beret: 'be', headband: 'hb',
+});
+const PANTS = codeMap<PantsStyle>({
+  plaid: 'pl', chino: 'ch', navy: 'nv', loud: 'ld', corduroy: 'cd', jeans: 'jn', shorts: 'sh', skort: 'sk', plaidskirt: 'pk',
+});
+const HAIRSTYLE = codeMap<HairStyle>({ short: 'sh', long: 'lo', ponytail: 'pt', bun: 'bu', bob: 'bo', braids: 'br' });
+const EARRINGS = codeMap<Earrings>({ none: 'no', pearls: 'pe', hoops: 'ho' });
 const SKIN = codeMap<SkinTone>({ light: 'lt', warm: 'wm', medium: 'md', deep: 'dp' });
 const EYES = codeMap<EyeStyle>({ none: 'no', sunglasses: 'sg', glasses: 'gl' });
 const FHAIR = codeMap<FacialHair>({ clean: 'cl', stubble: 'st', mustache: 'ms', beard: 'bd' });
@@ -1394,6 +1457,8 @@ export const DEFAULT_AVATAR: AvatarConfig = {
   facialHair: 'clean',
   mouth: 'none',
   hair: 'brown',
+  hairStyle: 'short',
+  earrings: 'none',
   gear: 'driver',
   ballCount: 0,
 };
@@ -1401,16 +1466,22 @@ export const DEFAULT_AVATAR: AvatarConfig = {
 export function parseAvatarSeed(seed?: string): AvatarConfig {
   const raw = (seed || 'emerald').trim().toLowerCase();
 
-  if (raw.startsWith('2.') || raw.startsWith('3.')) {
-    // v3 = v2 + kön som elfte fält
-    const isV3 = raw.startsWith('3.');
+  if (raw.startsWith('2.') || raw.startsWith('3.') || raw.startsWith('4.')) {
+    // v3 = v2 + kön, v4 = v3 + frisyr och örhängen
+    const version = Number(raw[0]);
     const body = raw.slice(2);
     const f = (i: number) => body.slice(i * 2, i * 2 + 2);
-    const count = Number(body.slice(isV3 ? 22 : 20));
+    const fieldCount = version === 4 ? 13 : version === 3 ? 11 : 10;
+    const count = Number(body.slice(fieldCount * 2));
+    const gender: AvatarBody = (version >= 3 && BODY.fromCode[f(10)]) || 'male';
+    const legacyTop = TOP.fromCode[f(1)] || DEFAULT_AVATAR.top;
     return {
-      body: (isV3 && BODY.fromCode[f(10)]) || 'male',
+      body: gender,
+      hairStyle: (version === 4 && HAIRSTYLE.fromCode[f(11)]) || (gender === 'female' ? 'long' : 'short'),
+      earrings: (version === 4 && EARRINGS.fromCode[f(12)]) || 'none',
       jacket: JACKET.fromCode[f(0)] || DEFAULT_AVATAR.jacket,
-      top: TOP.fromCode[f(1)] || DEFAULT_AVATAR.top,
+      // v3-damer utan tröja fick sporttopp
+      top: version < 4 && gender === 'female' && legacyTop === 'none' ? 'sportstop' : legacyTop,
       hat: HAT.fromCode[f(2)] || DEFAULT_AVATAR.hat,
       pants: PANTS.fromCode[f(3)] || DEFAULT_AVATAR.pants,
       skin: SKIN.fromCode[f(4)] || DEFAULT_AVATAR.skin,
@@ -1451,9 +1522,13 @@ export function serializeAvatarConfig(config: AvatarConfig): string {
     FHAIR.toCode[c.facialHair] +
     MOUTH.toCode[c.mouth] +
     HAIR.toCode[c.hair] +
-    GEAR.toCode[c.gear];
+    GEAR.toCode[c.gear] +
+    (BODY.toCode[c.body] || 'ma') +
+    (HAIRSTYLE.toCode[c.hairStyle] || 'sh') +
+    (EARRINGS.toCode[c.earrings] || 'no');
   const count = c.gear === 'ball' && c.ballCount > 0 ? String(Math.min(999, Math.floor(c.ballCount))) : '';
-  return `3.${body}${BODY.toCode[c.body] || 'ma'}${count}`;
+  // Max 2 + 26 + 3 = 31 tecken (Firestore-regeln tillåter 32)
+  return `4.${body}${count}`;
 }
 
 export type AvatarAnimationPose =

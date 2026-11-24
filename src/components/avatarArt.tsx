@@ -32,7 +32,13 @@ export const PANTS_PALETTE: Record<PantsStyle, { base: string; stripe1: string; 
   corduroy: { base: '#5c3a21', stripe1: '#422815', stripe2: '#734a2b', label: 'Manchester' },
   jeans: { base: '#2f4f8a', stripe1: '#c08a2e', stripe2: '#3b5f9e', label: 'Jeans' },
   shorts: { base: '#a8a07a', stripe1: '#8f875f', stripe2: '#a8a07a', label: 'Shorts' },
+  skort: { base: '#f8fafc', stripe1: '#cbd5e1', stripe2: '#f8fafc', label: 'Veckad kjol' },
+  plaidskirt: { base: '#7f1d1d', stripe1: '#facc15', stripe2: '#1e3a8a', label: 'Rutig kjol' },
 };
+
+/** Kjol eller klänning – benen syns och ingen byxa ritas. */
+export const isSkirt = (config: AvatarConfig) =>
+  config.top === 'dress' || config.pants === 'skort' || config.pants === 'plaidskirt';
 
 export const SKIN_PALETTE: Record<SkinTone, { skin: string; cheek: string; ear: string; label: string }> = {
   light: { skin: '#fde2c8', cheek: '#f5b59c', ear: '#f3c6a3', label: 'Ljus' },
@@ -59,6 +65,10 @@ export function topColors(config: AvatarConfig): { body: string; lapel: string; 
     sweater: { body: color.primary, lapel: color.lapel, accent: color.accent, sleeve: '#f9f6f0', outline: '#0a1410' },
     whitepike: { body: '#f8fafc', lapel: '#e2e8f0', accent: '#D4AF37', sleeve: '#f8fafc', outline: '#64748b' },
     none: { body: skin.skin, lapel: skin.ear, accent: skin.cheek, sleeve: skin.skin, outline: '#1b1917' },
+    dress: { body: color.primary, lapel: color.lapel, accent: color.accent, sleeve: skin.skin, outline: '#0a1410' },
+    ladypolo: { body: color.primary, lapel: color.lapel, accent: color.accent, sleeve: color.primary, outline: '#0a1410' },
+    cardigan: { body: color.primary, lapel: color.lapel, accent: color.accent, sleeve: color.primary, outline: '#0a1410' },
+    sportstop: { body: skin.skin, lapel: color.primary, accent: color.primary, sleeve: skin.skin, outline: '#1b1917' },
   };
   return byTop[config.top] || byTop.jacket;
 }
@@ -69,12 +79,13 @@ export const PantsPattern: React.FC<{ id: string; pants: PantsStyle }> = ({ id, 
   return (
     <pattern id={id} width="10" height="10" patternUnits="userSpaceOnUse">
       <rect width="10" height="10" fill={p.base} />
-      {pants === 'plaid' && (
+      {(pants === 'plaid' || pants === 'plaidskirt') && (
         <>
           <line x1="0" y1="5" x2="10" y2="5" stroke={p.stripe1} strokeWidth="1.5" />
           <line x1="5" y1="0" x2="5" y2="10" stroke={p.stripe2} strokeWidth="1.5" />
         </>
       )}
+      {pants === 'skort' && <line x1="5" y1="0" x2="5" y2="10" stroke={p.stripe1} strokeWidth="1" />}
       {pants === 'loud' && <polygon points="5,0 10,5 5,10 0,5" fill={p.stripe1} opacity="0.75" />}
       {pants === 'corduroy' && (
         <>
@@ -113,14 +124,37 @@ export const AvatarHead: React.FC<{ config: AvatarConfig; expression: HeadExpres
 
   return (
     <g>
-      {/* Långt hår bakom huvudet (kvinna) – syns även under hattar */}
-      {female && (
-        <path
-          d="M-18 -8 C-23 6, -22 20, -15 27 C-11 30, -6 28, -6 24 L6 24 C6 28, 11 30, 15 27 C22 20, 23 6, 18 -8 Z"
-          fill={hair}
-          stroke="#1b1917"
-          strokeWidth={strokeWidth * 0.6}
-        />
+      {/* Damfrisyr bakom huvudet – syns även under hattar */}
+      {female && config.hairStyle === 'long' && (
+        <path d="M-18 -8 C-23 6, -22 20, -15 27 C-11 30, -6 28, -6 24 L6 24 C6 28, 11 30, 15 27 C22 20, 23 6, 18 -8 Z"
+          fill={hair} stroke="#1b1917" strokeWidth={strokeWidth * 0.6} />
+      )}
+      {female && config.hairStyle === 'bob' && (
+        <path d="M-18 -8 C-22 2, -21 11, -16 14 L16 14 C21 11, 22 2, 18 -8 Z" fill={hair} stroke="#1b1917" strokeWidth={strokeWidth * 0.6} />
+      )}
+      {female && config.hairStyle === 'ponytail' && (
+        <g>
+          <path d="M9 -18 C25 -21, 31 -1, 25 17 C22 23, 17 18, 19 9 C21 -1, 18 -9, 8 -13 Z" fill={hair} stroke="#1b1917" strokeWidth={strokeWidth * 0.6} />
+          <circle cx="14" cy="-16" r="2.4" fill={color.accent} stroke="#1b1917" strokeWidth="0.7" />
+        </g>
+      )}
+      {female && config.hairStyle === 'bun' && (
+        <g>
+          <circle cx="0" cy="-23" r="7.5" fill={hair} stroke="#1b1917" strokeWidth={strokeWidth * 0.6} />
+          <path d="M-5 -24 Q0 -28 5 -24" fill="none" stroke="#1b1917" strokeWidth="0.7" opacity="0.5" />
+        </g>
+      )}
+      {female && config.hairStyle === 'braids' && (
+        <g>
+          {[-1, 1].map((side) => (
+            <g key={side}>
+              {[6, 12, 18, 24].map((y) => (
+                <ellipse key={y} cx={side * 16.5} cy={y} rx="3.8" ry="3.6" fill={hair} stroke="#1b1917" strokeWidth="0.6" />
+              ))}
+              <rect x={side * 16.5 - 2.2} y="27" width="4.4" height="2.4" rx="1" fill={color.accent} />
+            </g>
+          ))}
+        </g>
       )}
 
       {/* Hals och öron */}
@@ -131,6 +165,20 @@ export const AvatarHead: React.FC<{ config: AvatarConfig; expression: HeadExpres
       <ellipse cx="0" cy="0" rx="16.5" ry="17.5" fill={skin.skin} stroke="#1b1917" strokeWidth={strokeWidth} />
       <circle cx="-11" cy="4" r="3" fill={skin.cheek} opacity="0.55" />
       <circle cx="11" cy="4" r="3" fill={skin.cheek} opacity="0.55" />
+
+      {/* Örhängen */}
+      {config.earrings === 'pearls' && (
+        <>
+          <circle cx="-17.5" cy="6.5" r="1.9" fill="#f8fafc" stroke="#94a3b8" strokeWidth="0.6" />
+          <circle cx="17.5" cy="6.5" r="1.9" fill="#f8fafc" stroke="#94a3b8" strokeWidth="0.6" />
+        </>
+      )}
+      {config.earrings === 'hoops' && (
+        <>
+          <circle cx="-17.5" cy="8.5" r="3.2" fill="none" stroke="#D4AF37" strokeWidth="1.3" />
+          <circle cx="17.5" cy="8.5" r="3.2" fill="none" stroke="#D4AF37" strokeWidth="1.3" />
+        </>
+      )}
 
       {/* Ögon */}
       {!hideEyes && (
@@ -235,13 +283,21 @@ export const AvatarHead: React.FC<{ config: AvatarConfig; expression: HeadExpres
       )}
 
       {/* Hår (syns utan hatt och under solskärm) */}
-      {config.hat === 'none' &&
-        (female ? (
-          <path d="M-17.5 -4 C-19 -19, -6 -23, 4 -22 C15 -21, 19 -14, 17.5 -4 C15 -10, 9 -14, 2 -12 C-4 -15, -12 -12, -17.5 -4 Z" fill={hair} />
+      {female && (config.hat === 'none' || config.hat === 'visor' || config.hat === 'headband') &&
+        (config.hairStyle === 'bun' || config.hairStyle === 'ponytail' ? (
+          // Uppsatt hår: slätt bakåtkammat
+          <path d="M-17.5 -5 C-19 -19, -6 -23.5, 0 -23 C6 -23.5, 19 -19, 17.5 -5 C14 -13, 7 -16, 0 -16 C-7 -16, -14 -13, -17.5 -5 Z" fill={hair} />
+        ) : config.hairStyle === 'bob' ? (
+          // Rak lugg
+          <path d="M-17.5 -3 C-19 -19, -6 -23.5, 0 -23 C6 -23.5, 19 -19, 17.5 -3 L16.5 -8 L-16.5 -8 Z" fill={hair} />
         ) : (
-          <path d="M-17 -8 C-18 -20, -5 -22, 5 -21 C14 -20, 18 -16, 17 -8 C12 -14, 3 -15, -6 -14 C-12 -13, -15 -11, -17 -8 Z" fill={hair} />
+          // Sidbena
+          <path d="M-17.5 -4 C-19 -19, -6 -23, 4 -22 C15 -21, 19 -14, 17.5 -4 C15 -10, 9 -14, 2 -12 C-4 -15, -12 -12, -17.5 -4 Z" fill={hair} />
         ))}
-      {config.hat === 'visor' && <path d="M-14 -14 C-10 -23, 10 -23, 14 -14 Z" fill={hair} />}
+      {!female && config.hat === 'none' && (
+        <path d="M-17 -8 C-18 -20, -5 -22, 5 -21 C14 -20, 18 -16, 17 -8 C12 -14, 3 -15, -6 -14 C-12 -13, -15 -11, -17 -8 Z" fill={hair} />
+      )}
+      {!female && config.hat === 'visor' && <path d="M-14 -14 C-10 -23, 10 -23, 14 -14 Z" fill={hair} />}
 
       {/* Hattar */}
       {config.hat === 'flatcap' && (
@@ -291,6 +347,23 @@ export const AvatarHead: React.FC<{ config: AvatarConfig; expression: HeadExpres
           <circle cx="22" cy="-23" r="4.2" fill="#f9f6f0" stroke="#141a17" strokeWidth="1" />
           <rect x="-19" y="-14" width="37" height="5.5" rx="2.5" fill="#f9f6f0" stroke="#141a17" strokeWidth="1.1" />
         </g>
+      )}
+      {config.hat === 'sunhat' && (
+        <g>
+          <ellipse cx="0" cy="-12" rx="30" ry="5" fill="#f1e2b8" stroke="#1c1917" strokeWidth="1.1" />
+          <path d="M-14 -12 C-14 -27, 14 -27, 14 -12 Z" fill="#e9d5a1" stroke="#1c1917" strokeWidth="1.1" />
+          <rect x="-14" y="-16.5" width="28" height="4" fill={color.primary} />
+          <path d="M14 -15 L22 -9 L19 -8 Z" fill={color.primary} />
+        </g>
+      )}
+      {config.hat === 'beret' && (
+        <g>
+          <path d="M-19 -9 C-23 -21, 5 -28, 21 -16 C23 -11, 16 -9, 10 -10.5 C2 -11.5, -10 -11, -19 -9 Z" fill={color.primary} stroke="#141a17" strokeWidth="1.2" />
+          <line x1="2" y1="-25" x2="3" y2="-29" stroke="#141a17" strokeWidth="1.6" strokeLinecap="round" />
+        </g>
+      )}
+      {config.hat === 'headband' && (
+        <rect x="-17.5" y="-15.5" width="35" height="4.8" rx="2.2" fill={color.accent} stroke="#141a17" strokeWidth="0.9" />
       )}
     </g>
   );
