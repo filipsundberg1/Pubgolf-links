@@ -158,3 +158,26 @@ test('plikt sparas och läses på deltagaren', () => {
   assert.deepEqual(back.penalties, [{ hole: 2, type: 'rule' }]);
   assert.equal('penalties' in roundParticipantPayload(player('a', [1]), 'PG-AAAA', holes(3)), false);
 });
+
+test('pliktknappar visas bara där regeln gäller', async () => {
+  const { penaltyAppliesOn } = await import('./golfRules');
+  const plain = { drinkType: 'lager', drinkName: 'Norrlands Guld', hazardTitle: 'Lokalt pubhinder', hazardRule: '' };
+  const swear = { ...plain, hazardTitle: 'Svärförbud', hazardRule: 'Ingen svär.' };
+  const guinness = { ...plain, drinkType: 'stout', drinkName: 'Guinness' };
+  assert.equal(penaltyAppliesOn('swear', plain, false), false);
+  assert.equal(penaltyAppliesOn('swear', swear, true), true);
+  assert.equal(penaltyAppliesOn('rule', swear, true), false);
+  assert.equal(penaltyAppliesOn('rule', plain, true), true);
+  assert.equal(penaltyAppliesOn('rule', plain, false), false);
+  assert.equal(penaltyAppliesOn('splitg', plain, false), false);
+  assert.equal(penaltyAppliesOn('splitg', guinness, false), true);
+  assert.equal(penaltyAppliesOn('puke', plain, false), true);
+  assert.equal(penaltyAppliesOn('fall', swear, true), true);
+});
+
+test('inbjudna spelare sparas på rundan', () => {
+  const r = parseRound({ roundId: 'PG-AAAA', appId: 'december-links', courseId: 'c', courseTitle: 'B', city: 'S', eventDate: 'x', ownerId: 'u1', ownerName: 'F', gameMode: 'single', memberIds: ['u1'], locked: false, status: 'active', invitedIds: ['u2'] });
+  assert.deepEqual(r.invitedIds, ['u2']);
+  assert.deepEqual(roundPayload(r).invitedIds, ['u2']);
+  assert.equal('invitedIds' in roundPayload({ ...r, invitedIds: [] }), false);
+});

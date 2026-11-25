@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, Check, ChevronRight, Eye, Globe2, Loader2, Lock, Pencil, Play, PlusCircle, Shirt } from 'lucide-react';
+import { ArrowLeft, Check, ChevronRight, Eye, Globe2, Loader2, Lock, Pencil, Play, PlusCircle, Share2, Shirt } from 'lucide-react';
 import type { PlayerCareerStats, PlayerRoundHistoryItem, PubCourse } from '../../utils/golfRules';
 import { formatEventDate } from '../../utils/golfRules';
 import { AvatarCustomizer, GolferAvatar } from '../GolferAvatar';
@@ -37,6 +37,8 @@ interface MyProfileViewProps {
   onEditCourse: (courseId: string) => void;
   onStartCourse: (courseId: string) => void;
   onCreateCourse: () => void;
+  /** Länk som lägger till mig ("Lägg till mig på Pubgolf Links"). Tom = spelar-ID saknas än. */
+  shareUrl?: string;
 }
 
 const inputClass =
@@ -73,12 +75,31 @@ export const MyProfileView: React.FC<MyProfileViewProps> = ({
   onEditCourse,
   onStartCourse,
   onCreateCourse,
+  shareUrl = '',
 }) => {
   const [draft, setDraft] = useState<ProfileFields>(profile);
   const [tab, setTab] = useState<'rounds' | 'courses'>(initialTab);
   const [editing, setEditing] = useState<'avatar' | 'info' | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [shareNote, setShareNote] = useState<string | null>(null);
+
+  const shareProfile = async () => {
+    if (!shareUrl) return;
+    const text = `Lägg till mig på Pubgolf Links – ${profile.displayName} "${profile.nickname}". Mitt spelar-ID: ${playerCode}`;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: 'Lägg till mig på Pubgolf Links', text, url: shareUrl });
+        return;
+      }
+      await navigator.clipboard.writeText(`${text}\n${shareUrl}`);
+      setShareNote('Länken är kopierad – klistra in den i gruppchatten!');
+    } catch (err) {
+      if ((err as Error)?.name === 'AbortError') return;
+      setShareNote(shareUrl);
+    }
+    setTimeout(() => setShareNote(null), 4000);
+  };
 
   useEffect(() => {
     if (!editing) setDraft(profile);
@@ -141,6 +162,20 @@ export const MyProfileView: React.FC<MyProfileViewProps> = ({
       </section>
 
       {saved && <p className="rounded-xl bg-[#166534]/10 px-3 py-2 text-sm font-semibold text-[#166534]">Profilen är sparad!</p>}
+
+      {/* Dela profilen: länken öppnar min profil med en Lägg till-knapp */}
+      <section className="flex items-center gap-3 rounded-2xl border border-[#D4AF37]/50 bg-white px-4 py-3 shadow-xs">
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-semibold text-[#112218]">Lägg till mig på Pubgolf Links</div>
+          <div className="truncate text-xs text-[#112218]/60">
+            {shareNote || 'Skicka länken till kompisarna – ett tryck så är ni vänner.'}
+          </div>
+        </div>
+        <button type="button" onClick={() => void shareProfile()} disabled={!shareUrl}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-[#112218] px-4 py-2.5 text-xs font-bold text-[#F6F4EE] disabled:opacity-50">
+          <Share2 className="h-4 w-4 text-[#D4AF37]" /> Dela profil
+        </button>
+      </section>
 
       <div className="grid grid-cols-2 gap-2">
         <button type="button" onClick={() => setEditing(editing === 'avatar' ? null : 'avatar')}

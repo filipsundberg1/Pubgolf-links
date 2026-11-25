@@ -66,6 +66,7 @@ import {
   serializeAvatarConfig,
   STARTING_HANDICAP,
   formatHandicap,
+  formatEventDate,
   normalizePlayerCode,
   roundAsCourse,
   type FollowEdge,
@@ -170,6 +171,7 @@ const hashFor = (r: Route) => {
 };
 
 const LIVE_ROUND_KEY = 'pg-live-round';
+const PENDING_ADD_KEY = 'pg-pending-add';
 const readLiveRound = () => {
   try {
     return localStorage.getItem(LIVE_ROUND_KEY);
@@ -276,6 +278,31 @@ export default function App() {
     return () => window.removeEventListener('popstate', onPop);
   }, []);
 
+  // "Lägg till mig"-länk (?add=FS1234). Sparas i sessionStorage så den överlever inloggningen.
+  const [pendingAdd, setPendingAddState] = useState<string>(() => {
+    try {
+      const fromUrl = normalizePlayerCode(new URLSearchParams(window.location.search).get('add') || '');
+      if (fromUrl) {
+        sessionStorage.setItem(PENDING_ADD_KEY, fromUrl);
+        window.history.replaceState(null, '', `${window.location.pathname}${window.location.hash}`);
+        return fromUrl;
+      }
+      return sessionStorage.getItem(PENDING_ADD_KEY) || '';
+    } catch {
+      return '';
+    }
+  });
+  const setPendingAdd = (code: string) => {
+    setPendingAddState(code);
+    try {
+      if (code) sessionStorage.setItem(PENDING_ADD_KEY, code);
+      else sessionStorage.removeItem(PENDING_ADD_KEY);
+    } catch {
+      /* ignorera */
+    }
+  };
+  const [invitedByUid, setInvitedByUid] = useState<string>('');
+
   // Ta bort ?join= ur adressen så att en omladdning inte hoppar tillbaka till Spela
   useEffect(() => {
     if (!initialJoinParam) return;
@@ -294,6 +321,8 @@ export default function App() {
   const [followsIn, setFollowsIn] = useState<FollowEdge[]>([]);
   const [bannedUids, setBannedUids] = useState<Set<string>>(new Set());
   const [adminRounds, setAdminRounds] = useState<PubRound[] | null>(null);
+  const [invitedRounds, setInvitedRounds] = useState<PubRound[]>([]);
+  const [inviteBusy, setInviteBusy] = useState(false);
 
   useEffect(() => {
     const onSyncError = () =>
@@ -416,6 +445,15 @@ export default function App() {
       (err) => reportFirestoreError(err, OperationType.LIST, 'rounds')
     );
 
+    // Rundor jag är inbjuden till (måste tacka ja innan jag blir med)
+    const unsubInvites = onSnapshot(
+      query(collection(db, 'rounds'), where('invitedIds', 'array-contains', firebaseUser.uid)),
+      (snap) => setInvitedRounds(snap.docs.map((d) => parseRound(d.data())).filter((r) => r.status !== 'deleted')),
+      (err) => {
+        if (!isPermissionError(err)) reportFirestoreError(err, OperationType.LIST, 'rounds (inbjudningar)');
+      }
+    );
+
     const parseFollow = (d: Record<string, unknown>): FollowEdge => ({
       followerId: String(d.followerId),
       targetId: String(d.targetId),
@@ -446,6 +484,7 @@ export default function App() {
       unsubAllProfiles();
       unsubCourses();
       unsubRounds();
+      unsubInvites();
       unsubFollowsOut();
       unsubFollowsIn();
       unsubBans();
@@ -604,6 +643,27 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, activeRoundId, participantsByRound, firebaseUser]);
 
+  // Öppna profilen från en "Lägg till mig"-länk när spelarna har laddats
+  const profilesLoaded = allProfiles.length > 0;
+  useEffect(() => {
+    if (!pendingAdd || !firebaseUser || !profilesLoaded) return;
+    const target = allProfiles.find((p) => p.playerCode === pendingAdd);
+    setPendingAdd('');
+    if (!target) {
+      setNotice(`Hittade ingen spelare med ID ${pendingAdd}.`);
+      setTimeout(() => setNotice(null), 3500);
+      return;
+    }
+    if (target.uid === firebaseUser.uid) {
+      setNotice('Det där är din egen länk – skicka den till kompisarna!');
+      setTimeout(() => setNotice(null), 3500);
+      return;
+    }
+    setInvitedByUid(target.uid);
+    navigate('player', target.uid, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingAdd, firebaseUser, profilesLoaded, allProfiles]);
+
   // Ge äldre profiler ett spelar-ID
   useEffect(() => {
     if (!myProfile || myProfile.playerCode) return;
@@ -758,6 +818,12 @@ export default function App() {
           <p className="mt-3 text-base text-[#F6F4EE]/70">
             Bygg banor, starta rundor med gänget och följ scoren hål för hål.
           </p>
+
+          {pendingAdd && !authNotice && (
+            <div className="mt-6 rounded-2xl border border-[#D4AF37]/40 bg-[#D4AF37]/10 px-4 py-3 text-sm text-[#F6F4EE]">
+              En kompis vill spela pubgolf med dig. Logga in så kan du lägga till hen direkt.
+            </div>
+          )}
 
           {authNotice && (
             <div className="mt-6 rounded-2xl border border-[#D4AF37]/40 bg-[#D4AF37]/10 px-4 py-3 text-sm text-[#F6F4EE]">
@@ -1137,6 +1203,7 @@ export default function App() {
     }
   };
 
+  /** Ägaren bjuder in en spelare. Spelaren måste själv tacka ja innan hen blir med. */
   const handleAddPlayer = async (roundId: string, rawCode: string): Promise<{ ok: boolean; message: string }> => {
     const code = normalizePlayerCode(rawCode);
     let profile = allProfiles.find((p) => p.playerCode === code) || null;
@@ -1150,23 +1217,74 @@ export default function App() {
     const round = rounds.find((r) => r.roundId === roundId);
     if (!round) return { ok: false, message: 'Rundan hittades inte.' };
     if (round.memberIds.includes(profile.uid)) return { ok: false, message: `${profile.displayName} är redan med.` };
+    if ((round.invitedIds || []).includes(profile.uid)) {
+      return { ok: false, message: `${profile.displayName} är redan inbjuden – väntar på svar.` };
+    }
     try {
+      await updateDoc(roundRef(roundId), { invitedIds: arrayUnion(profile.uid), updatedAt: serverTimestamp() });
+    } catch (error) {
+      console.error('Kunde inte bjuda in spelare', error);
+      return { ok: false, message: 'Kunde inte skicka inbjudan. Försök igen.' };
+    }
+    setRounds((prev) =>
+      prev.map((r) => (r.roundId === roundId ? { ...r, invitedIds: [...(r.invitedIds || []), profile!.uid] } : r))
+    );
+    return { ok: true, message: `Inbjudan skickad till ${profile.displayName} – hen måste tacka ja.` };
+  };
+
+  const handleCancelInvite = async (roundId: string, playerUid: string) => {
+    await updateRound(roundId, { invitedIds: arrayRemove(playerUid) });
+    setRounds((prev) =>
+      prev.map((r) => (r.roundId === roundId ? { ...r, invitedIds: (r.invitedIds || []).filter((x) => x !== playerUid) } : r))
+    );
+  };
+
+  const acceptInvite = async (round: PubRound) => {
+    setInviteBusy(true);
+    try {
+      const inviteOwner = courseById.get(round.courseId)?.ownerId || round.ownerId;
+      const holes = round.customHoles
+        ? holesFromOverrides(round.customHoles, round.courseId, inviteOwner)
+        : holesForCourse(round.courseId, inviteOwner);
       const batch = writeBatch(db);
-      batch.update(roundRef(roundId), { memberIds: arrayUnion(profile.uid), updatedAt: serverTimestamp() });
+      batch.update(roundRef(round.roundId), {
+        memberIds: arrayUnion(uid),
+        invitedIds: arrayRemove(uid),
+        updatedAt: serverTimestamp(),
+      });
       batch.set(
-        participantRef(roundId, profile.uid),
-        roundParticipantPayload(
-          newParticipantFor(profile, profile.uid, roundId, (holesByRoundId[roundId] || []).length || 9),
-          roundId,
-          holesByRoundId[roundId] || []
-        )
+        participantRef(round.roundId, uid),
+        roundParticipantPayload(newParticipantFor(myProfile, uid, round.roundId, holes.length), round.roundId, holes)
       );
       await batch.commit();
+      setInvitedRounds((prev) => prev.filter((r) => r.roundId !== round.roundId));
+      setRounds((prev) =>
+        prev.some((r) => r.roundId === round.roundId)
+          ? prev
+          : [...prev, { ...round, memberIds: [...round.memberIds, uid], invitedIds: (round.invitedIds || []).filter((x) => x !== uid) }]
+      );
+      showNotice(`Du är med i ${round.courseTitle}!`);
+      if (round.status === 'active') setLiveRoundId(round.roundId);
+      navigate('round', round.roundId);
     } catch (error) {
-      console.error('Kunde inte lägga till spelare', error);
-      return { ok: false, message: 'Kunde inte lägga till spelaren. Försök igen.' };
+      console.error('Kunde inte tacka ja', error);
+      showNotice('Kunde inte gå med just nu. Försök igen.');
+    } finally {
+      setInviteBusy(false);
     }
-    return { ok: true, message: `${profile.displayName} är tillagd!` };
+  };
+
+  const declineInvite = async (round: PubRound) => {
+    setInviteBusy(true);
+    try {
+      await updateDoc(roundRef(round.roundId), { invitedIds: arrayRemove(uid), updatedAt: serverTimestamp() });
+      setInvitedRounds((prev) => prev.filter((r) => r.roundId !== round.roundId));
+    } catch (error) {
+      console.error('Kunde inte tacka nej', error);
+      showNotice('Något gick fel. Försök igen.');
+    } finally {
+      setInviteBusy(false);
+    }
   };
 
   const handleRemovePlayer = async (roundId: string, playerUid: string) => {
@@ -1624,6 +1742,39 @@ export default function App() {
         )}
 
         {showMiniBar && <style>{':root{--pg-mini-bar:76px}'}</style>}
+        {!pendingDeletedRound && invitedRounds.length > 0 && (() => {
+          const inv = invitedRounds[0];
+          const inviter = profileByUid.get(inv.ownerId);
+          return (
+            <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4 sm:items-center" role="dialog" aria-modal="true" aria-label="Inbjudan till runda">
+              <div className="w-full max-w-sm overflow-hidden rounded-3xl bg-white shadow-2xl">
+                <div className="bg-[#112218] px-5 py-4 text-[#F6F4EE]">
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#D4AF37]">
+                    Inbjudan{invitedRounds.length > 1 ? ` (1 av ${invitedRounds.length})` : ''}
+                  </p>
+                  <h2 className="mt-1 font-display text-xl font-bold">{titleForRound(inv)}</h2>
+                  <p className="mt-1 text-sm text-[#F6F4EE]/70">
+                    {inviter?.displayName || inv.ownerName} vill ha med dig · {formatEventDate(inv.eventDate)} · {inv.city}
+                  </p>
+                </div>
+                <div className="space-y-2 p-5">
+                  <p className="text-sm text-[#112218]/70">
+                    {inv.memberIds.length} spelare är med. Tackar du ja hamnar du i rundan och på leaderboarden.
+                  </p>
+                  <button type="button" disabled={inviteBusy} onClick={() => void acceptInvite(inv)}
+                    className="w-full rounded-2xl bg-[#166534] py-3 text-sm font-bold text-white disabled:opacity-60">
+                    Gå med i rundan
+                  </button>
+                  <button type="button" disabled={inviteBusy} onClick={() => void declineInvite(inv)}
+                    className="w-full rounded-2xl border border-[#112218]/15 py-3 text-sm font-semibold text-[#112218]/75 disabled:opacity-60">
+                    Nej tack
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
         <main id="top" className={`mx-auto max-w-3xl px-4 pt-5 ${showMiniBar ? 'pb-28' : 'pb-10'}`}>
           {view === 'home' && (
             <HomeView
@@ -1788,8 +1939,15 @@ export default function App() {
                     isCourseOwner={activeCourseDoc?.ownerId === uid}
                     onToggleLock={(locked) => updateRound(activeRound.roundId, { locked })}
                     onAddPlayer={(code) => handleAddPlayer(activeRound.roundId, code)}
+                    invited={(activeRound.invitedIds || [])
+                      .map((id) => profileByUid.get(id))
+                      .filter((p): p is ReusablePlayerProfile => !!p)}
+                    onCancelInvite={(playerUid) => handleCancelInvite(activeRound.roundId, playerUid)}
                     quickAdd={[...friends, ...followingOnly].filter(
-                      (p) => !activeRound.memberIds.includes(p.uid) && !!p.playerCode
+                      (p) =>
+                        !activeRound.memberIds.includes(p.uid) &&
+                        !(activeRound.invitedIds || []).includes(p.uid) &&
+                        !!p.playerCode
                     )}
                     morePlayers={allProfiles
                       .filter(
@@ -1797,6 +1955,7 @@ export default function App() {
                           p.uid !== uid &&
                           !!p.playerCode &&
                           !activeRound.memberIds.includes(p.uid) &&
+                          !(activeRound.invitedIds || []).includes(p.uid) &&
                           !followingIds.has(p.uid) &&
                           !bannedUids.has(p.uid)
                       )
@@ -1843,6 +2002,7 @@ export default function App() {
               onEditCourse={(id) => navigate('editCourse', id)}
               onStartCourse={openStart}
               onCreateCourse={() => setView('create')}
+              shareUrl={myPlayerCode ? `${window.location.origin}/?add=${encodeURIComponent(myPlayerCode)}` : ''}
             />
           )}
 
@@ -1868,6 +2028,7 @@ export default function App() {
                 stats={careerStatsByUid[inspectedPlayer.uid]}
                 handicap={careerStatsByUid[inspectedPlayer.uid]?.computedHandicap || inspectedPlayer.handicap || '54.0'}
                 relation={relationFor(inspectedPlayer.uid)}
+                invited={invitedByUid === inspectedPlayer.uid}
                 courses={courses
                   .filter((c) => c.ownerId === inspectedPlayer.uid && (c.isPublic || isAdmin))
                   .sort((a, b) => a.title.localeCompare(b.title, 'sv'))}

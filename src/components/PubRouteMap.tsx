@@ -83,6 +83,88 @@ function checkAndDispatchQuotaError(err: unknown) {
 
 const DEFAULT_SWEDEN_CENTER = { lat: 59.3293, lng: 18.0686 }; // Stockholm default fallback
 
+// ---- Koordinater för barer ----
+// Geokodning på adressen först (stor kvot), Places-textsök bara som reserv (liten dagskvot).
+// Allt sparas i webbläsaren så att samma bar aldrig slås upp två gånger.
+type GeoHit = { lat: number; lng: number; formattedAddress?: string };
+const GEO_CACHE_KEY = 'pg-geo-v1';
+const geoMemory: Record<string, GeoHit | null> = (() => {
+  try {
+    return JSON.parse(localStorage.getItem(GEO_CACHE_KEY) || '{}');
+  } catch {
+    return {};
+  }
+})();
+const saveGeoMemory = () => {
+  try {
+    const keys = Object.keys(geoMemory);
+    // Håll cachen liten
+    if (keys.length > 400) keys.slice(0, keys.length - 400).forEach((k) => delete geoMemory[k]);
+    localStorage.setItem(GEO_CACHE_KEY, JSON.stringify(geoMemory));
+  } catch {
+    /* privat läge */
+  }
+};
+
+interface GeocoderLike {
+  geocode: (req: Record<string, unknown>) => Promise<{
+    results?: { formatted_address?: string; geometry?: { location?: { lat: () => number; lng: () => number } } }[];
+  }>;
+}
+interface PlaceLike {
+  searchByText: (req: Record<string, unknown>) => Promise<{
+    places?: { formattedAddress?: string; location?: { lat: () => number; lng: () => number } }[];
+  }>;
+}
+
+async function lookupLocation(
+  query: string,
+  geocoder: GeocoderLike | null,
+  Place: PlaceLike | null
+): Promise<GeoHit | null> {
+  const key = query.trim().toLowerCase();
+  if (!key) return null;
+  if (key in geoMemory) return geoMemory[key];
+  let hit: GeoHit | null = null;
+  if (geocoder) {
+    try {
+      const { results } = await geocoder.geocode({ address: query, region: 'se', language: 'sv' });
+      const loc = results?.[0]?.geometry?.location;
+      if (loc) hit = { lat: loc.lat(), lng: loc.lng(), formattedAddress: results?.[0]?.formatted_address };
+    } catch (err) {
+      checkAndDispatchQuotaError(err);
+    }
+  }
+  if (!hit && Place) {
+    try {
+      const { places } = await Place.searchByText({
+        textQuery: query,
+        fields: ['formattedAddress', 'location'],
+        maxResultCount: 1,
+        language: 'sv',
+        region: 'se',
+      });
+      const loc = places?.[0]?.location;
+      if (loc) hit = { lat: loc.lat(), lng: loc.lng(), formattedAddress: places?.[0]?.formattedAddress };
+    } catch (err) {
+      // Places-kvoten är liten – det räcker att geokodningen fungerar
+      console.warn('[karta] Places-sökning misslyckades', err);
+    }
+  }
+  // Spara även "inget svar" för den här sessionen så vi inte frågar om och om igen
+  geoMemory[key] = hit;
+  if (hit) saveGeoMemory();
+  return hit;
+}
+
+/** Bästa sökfrågan för en bar: gatuadressen om den finns, annars namn + stad. */
+function holeLookupQuery(hole: PubHole, city: string): string {
+  const address = (hole.pubAddress || '').trim();
+  const hasAddress = address.length >= 2 && !/^ange (gatu)?adress$/i.test(address);
+  if (hasAddress) return /\d/.test(address) || address.includes(',') ? address : `${address}, ${city}`;
+  return buildHoleSearchQuery(hole, city);
+}
+
 interface PubRouteCanvasControllerProps {
   course: PubCourse;
   holes: PubHole[];
@@ -118,6 +200,7 @@ const PubRouteCanvasController: React.FC<PubRouteCanvasControllerProps> = ({
 
   const map = useMap();
   const placesLib = useMapsLibrary('places');
+  const geocodingLib = useMapsLibrary('geocoding');
   const routesLib = useMapsLibrary('routes');
   const coreLib = useMapsLibrary('core');
 
@@ -145,35 +228,20 @@ interface GmpPolylineInstance {
     [orderedConfiguredHoles]
   );
 
-  // 1. Resolve coordinates for configured pub holes (and city fallback) via Places API (New) `Place.searchByText`
+  // 1. Koordinater för barerna (geokodning först, Places som reserv, sparat i webbläsaren)
   useEffect(() => {
-    if (!placesLib) return;
+    if (!geocodingLib && !placesLib) return;
     let cancelled = false;
+    const geocoder = geocodingLib
+      ? (new (geocodingLib as unknown as { Geocoder: new () => GeocoderLike }).Geocoder() as GeocoderLike)
+      : null;
+    const Place = placesLib ? ((placesLib as unknown as { Place: PlaceLike }).Place) : null;
 
     async function resolveAllStops() {
-      const { Place } = placesLib!;
-
-      // Resolve city center if not cached
       const cityKey = (course.city || 'Stockholm').trim().toLowerCase();
       if (cityKey && !resolvedCityCenterCache[cityKey]) {
-        try {
-          const { places } = await Place.searchByText({
-            textQuery: `${course.city}, Sverige`,
-            fields: ['location'],
-            maxResultCount: 1,
-            language: 'sv',
-            region: 'se',
-          });
-          const firstLoc = places?.[0]?.location;
-          if (firstLoc) {
-            resolvedCityCenterCache[cityKey] = {
-              lat: firstLoc.lat(),
-              lng: firstLoc.lng(),
-            };
-          }
-        } catch (err) {
-          checkAndDispatchQuotaError(err);
-        }
+        const center = await lookupLocation(`${course.city || 'Stockholm'}, Sverige`, geocoder, Place);
+        if (center) resolvedCityCenterCache[cityKey] = { lat: center.lat, lng: center.lng };
       }
 
       if (orderedConfiguredHoles.length === 0) {
@@ -192,50 +260,29 @@ interface GmpPolylineInstance {
       const nextStops: ResolvedPubStop[] = [];
 
       for (const hole of orderedConfiguredHoles) {
-        const searchQuery = buildHoleSearchQuery(hole, course.city);
-        const cacheKey = `${course.courseId}:h${hole.holeNumber}:${searchQuery.toLowerCase()}`;
-
+        const query = holeLookupQuery(hole, course.city || 'Stockholm');
+        const cacheKey = `${course.courseId}:h${hole.holeNumber}:${query.toLowerCase()}`;
+        const base = {
+          holeNumber: hole.holeNumber,
+          pubName: hole.pubName,
+          pubAddress: hole.pubAddress,
+          drinkName: hole.drinkName,
+          par: hole.par,
+          volumeCl: hole.volumeCl,
+        };
         if (resolvedStopCache[cacheKey]) {
-          nextStops.push({
-            ...resolvedStopCache[cacheKey],
-            pubName: hole.pubName,
-            pubAddress: hole.pubAddress,
-            drinkName: hole.drinkName,
-            par: hole.par,
-            volumeCl: hole.volumeCl,
-          });
+          nextStops.push({ ...resolvedStopCache[cacheKey], ...base });
           continue;
         }
-
-        try {
-          const { places } = await Place.searchByText({
-            textQuery: searchQuery,
-            fields: ['displayName', 'formattedAddress', 'location'],
-            maxResultCount: 1,
-            language: 'sv',
-            region: 'se',
-          });
-
-          const matchedPlace = places?.[0];
-          if (matchedPlace?.location) {
-            const stop: ResolvedPubStop = {
-              holeNumber: hole.holeNumber,
-              pubName: hole.pubName,
-              pubAddress: hole.pubAddress,
-              drinkName: hole.drinkName,
-              par: hole.par,
-              volumeCl: hole.volumeCl,
-              location: {
-                lat: matchedPlace.location.lat(),
-                lng: matchedPlace.location.lng(),
-              },
-              formattedAddress: matchedPlace.formattedAddress || hole.pubAddress,
-            };
-            resolvedStopCache[cacheKey] = stop;
-            nextStops.push(stop);
-          }
-        } catch (err) {
-          checkAndDispatchQuotaError(err);
+        const hit = await lookupLocation(query, geocoder, Place);
+        if (hit) {
+          const stop: ResolvedPubStop = {
+            ...base,
+            location: { lat: hit.lat, lng: hit.lng },
+            formattedAddress: hit.formattedAddress || hole.pubAddress,
+          };
+          resolvedStopCache[cacheKey] = stop;
+          nextStops.push(stop);
         }
       }
 
@@ -255,7 +302,8 @@ interface GmpPolylineInstance {
     return () => {
       cancelled = true;
     };
-  }, [placesLib, course.courseId, course.city, configuredSignature, map]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [geocodingLib, placesLib, course.courseId, course.city, configuredSignature, map]);
 
   // 2. Compute & render walking route polylines between pubs via modern `Route.computeRoutes`
   useEffect(() => {

@@ -96,6 +96,8 @@ export interface PubRound {
   status: RoundStatus;
   /** Rundans egna hål (ändrad ordning eller lokala ändringar). Saknas = banans hål gäller. */
   customHoles?: RoundHoleOverride[];
+  /** Spelare som ägaren bjudit in men som inte svarat än. */
+  invitedIds?: string[];
 }
 
 /** Rundan i samma form som en PubCourse, så leaderboard/statistik kan återanvändas. */
@@ -511,6 +513,26 @@ export function penaltyTotals(penalties: PenaltyEvent[] | undefined, holeCount: 
 /** Ser ut som svordomshålet (då ger varje svordom 1 slag i stället för 2). */
 export const isSwearHole = (h: { hazardTitle: string; hazardRule: string }) =>
   /sv(ä|a)r|svordom|svära/i.test(`${h.hazardTitle} ${h.hazardRule}`);
+
+/** Guinness/stout-hål: där kan man splitta G:et. */
+export const isSplitTheGHole = (h: { drinkType: string; drinkName: string }) =>
+  h.drinkType === 'stout' || /guinness/i.test(h.drinkName);
+
+/**
+ * Vilka pliktknappar som visas på ett hål. Spya, trilla och övrig plikt gäller alla hål.
+ * Svordom bara på svordomshålet, regelbrott bara på hål med egen regel, Split the G bara på Guinness/stout.
+ */
+export function penaltyAppliesOn(
+  type: PenaltyType,
+  hole: { drinkType: string; drinkName: string; hazardTitle: string; hazardRule: string },
+  hasOwnRule: boolean,
+  swearHole = isSwearHole(hole)
+): boolean {
+  if (type === 'swear') return swearHole;
+  if (type === 'rule') return hasOwnRule && !swearHole;
+  if (type === 'splitg') return isSplitTheGHole(hole);
+  return true;
+}
 
 export interface RoundSummary {
   /** Plikt som lagts på totalen (slag). */
@@ -1961,7 +1983,7 @@ export const GENERAL_RULES: { title: string; text: string }[] = [
   { title: 'Spya', text: '2 slag plikt.' },
   { title: 'Snubbla eller trilla', text: '2 slag plikt.' },
   { title: 'Övrig plikt', text: 'Annat fuffens som gänget dömer: 1 slag plikt.' },
-  { title: 'Split the G', text: 'Splittar du G:et på första klunken drar du bort 2 slag från din totalscore.' },
+  { title: 'Split the G', text: 'På Guinness-hål: splittar du G:et på första klunken drar du bort 2 slag från din totalscore.' },
   { title: 'Plikt i appen', text: 'Lägg in plikt och Split the G med knapparna på hålet. Allt summeras på totalen och i tabellen.' },
   { title: 'Vinst', text: 'Lägst totalscore (med plikt och bonus) bland dem som spelat klart alla hål vinner rundan.' },
 ];

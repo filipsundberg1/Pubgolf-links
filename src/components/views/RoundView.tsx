@@ -24,6 +24,8 @@ import {
   PENALTY_ORDER,
   PENALTY_TYPES,
   isSwearHole,
+  penaltyAppliesOn,
+  isSplitTheGHole,
   type PenaltyType,
   buildLeaderboard,
   calculateRoundSummary,
@@ -155,7 +157,10 @@ export const RoundView: React.FC<RoundViewProps> = ({
   const swearHole = isSwearHole(hole);
   const holePenalties = (me.penalties || []).filter((e) => e.hole === hole.holeNumber);
   const countOn = (type: PenaltyType) => holePenalties.filter((e) => e.type === type).length;
-  const penaltyOrder: PenaltyType[] = swearHole ? ['swear', ...PENALTY_ORDER.filter((t) => t !== 'swear')] : PENALTY_ORDER;
+  // Bara de plikter som gäller på just det här hålet. Redan registrerade syns alltid (så de kan ångras).
+  const penaltyOrder: PenaltyType[] = PENALTY_ORDER.filter(
+    (t) => countOn(t) > 0 || penaltyAppliesOn(t, hole, hasRule, swearHole)
+  ).sort((a, b) => (a === 'swear' && swearHole ? -1 : b === 'swear' && swearHole ? 1 : 0));
   const signed = (n: number) => (n > 0 ? `+${n}` : `${n}`);
   const sipsToPar = summary.totalToPar - summary.penaltyStrokes + summary.bonusStrokes;
 
@@ -311,7 +316,9 @@ export const RoundView: React.FC<RoundViewProps> = ({
                 ? isPlaceholder(hole.hazardRule)
                   ? 'Se rubriken.'
                   : hole.hazardRule
-                : 'Grundreglerna gäller: spya eller trilla = 2 slag, Split the G på första klunken = −2.'}
+                : isSplitTheGHole(hole)
+                  ? 'Grundreglerna gäller. Guinness-hål: split the G på första klunken = −2 på totalen.'
+                  : 'Grundreglerna gäller: spya eller trilla = 2 slag plikt.'}
             </p>
           </div>
 
@@ -397,7 +404,7 @@ export const RoundView: React.FC<RoundViewProps> = ({
             <div className="text-xs font-semibold uppercase tracking-[0.15em] text-[#112218]/55">Plikt & bonus på hål {hole.holeNumber}</div>
             <button type="button" onClick={() => setSheet('rules')} className="text-[11px] font-semibold text-[#166534]">Regler</button>
           </div>
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className={`grid gap-1.5 ${penaltyOrder.length === 4 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'}`}>
             {penaltyOrder.map((type) => {
               const t = PENALTY_TYPES[type];
               const bonus = t.strokes < 0;

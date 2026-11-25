@@ -155,6 +155,7 @@ export function parseRound(d: DocumentData): PubRound {
     locked: d.locked === true,
     status: d.status === 'deleted' ? 'deleted' : d.status === 'finished' ? 'finished' : 'active',
     customHoles: Array.isArray(d.customHoles) && d.customHoles.length > 0 ? d.customHoles.map(parseOverride) : undefined,
+    invitedIds: Array.isArray(d.invitedIds) ? d.invitedIds.map(String) : [],
   };
 }
 
@@ -207,6 +208,7 @@ export function roundPayload(r: PubRound): Record<string, unknown> {
     ...(r.customHoles && r.customHoles.length > 0
       ? { customHoles: r.customHoles.slice(0, MAX_HOLES).map(sanitizeOverride) }
       : {}),
+    ...(r.invitedIds && r.invitedIds.length > 0 ? { invitedIds: r.invitedIds.slice(0, 40) } : {}),
     updatedAt: serverTimestamp(),
   };
 }

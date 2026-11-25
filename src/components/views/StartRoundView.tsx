@@ -122,7 +122,7 @@ export const StartRoundView: React.FC<StartRoundViewProps> = ({ course, holes, i
         </div>
         <p className="flex items-start gap-2 rounded-2xl bg-[#F6F4EE] px-3 py-2.5 text-xs text-[#112218]/70">
           <Flag className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#166534]" />
-          Du blir ägare av rundan och får en privat kod. Skicka koden till de som ska vara med. Du kan också lägga till spelare med deras spelar-ID, och låsa rundan när alla är inne.
+          Du blir ägare av rundan och får en privat kod. Skicka koden till de som ska vara med. Du kan också bjuda in spelare – de får en förfrågan och måste tacka ja – och låsa rundan när alla är inne.
         </p>
         {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-800">{error}</p>}
         <button type="button" onClick={start} disabled={busy || !eventDate}

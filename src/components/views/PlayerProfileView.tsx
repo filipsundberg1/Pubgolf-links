@@ -9,6 +9,8 @@ interface PlayerProfileViewProps {
   stats: PlayerCareerStats | undefined;
   handicap: string;
   relation: Relation;
+  /** Öppnad via spelarens "Lägg till mig"-länk. */
+  invited?: boolean;
   /** Spelarens banor som man får se (öppna banor, eller alla om det är ens egna). */
   courses: PubCourse[];
   holeCountFor: (course: PubCourse) => number;
@@ -23,6 +25,7 @@ export const PlayerProfileView: React.FC<PlayerProfileViewProps> = ({
   stats,
   handicap,
   relation,
+  invited = false,
   courses,
   holeCountFor,
   onBack,
@@ -36,6 +39,16 @@ export const PlayerProfileView: React.FC<PlayerProfileViewProps> = ({
       <button type="button" onClick={onBack} className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#166534]">
         <ArrowLeft className="h-4 w-4" /> Tillbaka
       </button>
+
+      {invited && relation !== 'friend' && relation !== 'following' && (
+        <section className="flex items-center gap-3 rounded-2xl border-2 border-[#D4AF37] bg-[#D4AF37]/10 px-4 py-3">
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-bold text-[#112218]">{player.displayName.split(' ')[0]} vill spela pubgolf med dig</div>
+            <div className="text-xs text-[#112218]/65">Lägg till så kan ni ta med varandra i rundor direkt.</div>
+          </div>
+          <FollowButton relation={relation} onFollow={onFollow} size="md" />
+        </section>
+      )}
 
       <section className="overflow-hidden rounded-3xl bg-[#112218] text-[#F6F4EE] shadow-xl">
         <div className="flex items-center gap-4 p-5">

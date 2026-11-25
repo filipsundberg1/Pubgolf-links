@@ -22,7 +22,7 @@ export const AboutView: React.FC<{ onBack: () => void }> = ({ onBack }) => (
         <li>Split the G på första klunken = −2 slag på totalen. Plikt och bonus läggs in med knapparna på hålet och summeras i tabellen.</li>
         <li>En bana är banguiden: barer, dryck, par och regler – 1 till 18 hål. Öppna banor syns för alla under Spela.</li>
         <li>Vill ni köra en bana i annan ordning? Kör baklänges när ni startar, eller låt rundans ägare byta plats på hålen bara för er runda.</li>
-        <li>En runda är när ni spelar banan. Den som startar rundan får en privat kod att dela, kan lägga till spelare med spelar-ID och låsa rundan.</li>
+        <li>En runda är när ni spelar banan. Den som startar rundan får en privat kod att dela, kan bjuda in spelare (de måste tacka ja) och låsa rundan.</li>
         <li>Rundor du inte vill ska räknas kan du ta bort ur ditt HCP.</li>
         <li>Alla börjar på HCP 54. Sedan räknas det ut från dina bästa hela rundor (alla hål spelade), omräknat till 18 hål. Under 10 = singel, och då låses den vita tourpikén upp.</li>
         <li>Vinner du en runda (lägst score bland dem som spelat klart, minst två) får du en guldstjärna – större vid 5, 10 och 20 vinster.</li>

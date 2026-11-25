@@ -207,7 +207,7 @@ service cloud.firestore {
       ]) &&
       data.keys().hasOnly([
         'roundId', 'appId', 'courseId', 'courseTitle', 'city', 'eventDate',
-        'ownerId', 'ownerName', 'gameMode', 'memberIds', 'locked', 'status', 'customHoles', 'updatedAt'
+        'ownerId', 'ownerName', 'gameMode', 'memberIds', 'locked', 'status', 'customHoles', 'invitedIds', 'updatedAt'
       ]) &&
       data.roundId == roundId &&
       roundId.matches('^PG-[A-Z0-9]{4,8}$') &&
@@ -223,6 +223,7 @@ service cloud.firestore {
       data.locked is bool &&
       data.status in ['active', 'finished', 'deleted'] &&
       (!('customHoles' in data) || (data.customHoles is list && data.customHoles.size() >= 1 && data.customHoles.size() <= 18)) &&
+      (!('invitedIds' in data) || (data.invitedIds is list && data.invitedIds.size() <= 40)) &&
       data.updatedAt == request.time;
     }
 
@@ -283,8 +284,12 @@ service cloud.firestore {
 
       // Anyone signed in who knows the code (= document id) may look the round up.
       allow get: if isSignedIn() && isValidId(roundId);
-      // Listing only returns rounds you are a member of.
-      allow list: if isSignedIn() && (request.auth.uid in resource.data.memberIds || isAdmin());
+      // Listing only returns rounds you are a member of – or invited to.
+      allow list: if isSignedIn() && (
+        request.auth.uid in resource.data.memberIds ||
+        request.auth.uid in resource.data.get('invitedIds', []) ||
+        isAdmin()
+      );
 
       allow create: if isVerifiedUser() &&
         !isBanned() &&
@@ -302,8 +307,24 @@ service cloud.firestore {
             existing().ownerId == request.auth.uid &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'courseTitle', 'city', 'eventDate', 'ownerName', 'gameMode',
-              'memberIds', 'locked', 'status', 'customHoles', 'updatedAt'
+              'memberIds', 'locked', 'status', 'customHoles', 'invitedIds', 'updatedAt'
             ])
+          ) ||
+          // Accept an invite: move yourself from invitedIds to memberIds (works even when locked)
+          (
+            !isBanned() &&
+            existing().status != 'deleted' &&
+            request.auth.uid in existing().get('invitedIds', []) &&
+            !(request.auth.uid in existing().memberIds) &&
+            incoming().memberIds == existing().memberIds.concat([request.auth.uid]) &&
+            incoming().get('invitedIds', []) == existing().get('invitedIds', []).removeAll([request.auth.uid]) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['memberIds', 'invitedIds', 'updatedAt'])
+          ) ||
+          // Decline an invite: only remove yourself from invitedIds
+          (
+            request.auth.uid in existing().get('invitedIds', []) &&
+            incoming().get('invitedIds', []) == existing().get('invitedIds', []).removeAll([request.auth.uid]) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['invitedIds', 'updatedAt'])
           ) ||
           // Join with the code: only while active and unlocked, only adding yourself
           (

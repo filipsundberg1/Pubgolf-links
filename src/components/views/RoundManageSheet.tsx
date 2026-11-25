@@ -17,6 +17,9 @@ interface RoundManageSheetProps {
   quickAdd?: ReusablePlayerProfile[];
   /** Övriga spelare i appen (senast aktiva först). */
   morePlayers?: ReusablePlayerProfile[];
+  /** Inbjudna som inte svarat än. */
+  invited?: ReusablePlayerProfile[];
+  onCancelInvite?: (uid: string) => Promise<void>;
   onRemovePlayer: (uid: string) => Promise<void>;
   onToggleCoursePublic: (isPublic: boolean) => Promise<void>;
   onSetCountsForHcp: (counts: boolean) => Promise<void>;
@@ -47,6 +50,8 @@ export const RoundManageSheet: React.FC<RoundManageSheetProps> = ({
   onAddPlayer,
   quickAdd = [],
   morePlayers = [],
+  invited = [],
+  onCancelInvite,
   onRemovePlayer,
   onToggleCoursePublic,
   onSetCountsForHcp,
@@ -133,8 +138,28 @@ export const RoundManageSheet: React.FC<RoundManageSheetProps> = ({
                 </li>
               ))}
             </ul>
+            {invited.length > 0 && (
+              <div className="mt-3">
+                <div className="mb-1.5 text-[11px] font-semibold text-[#112218]/55">Inbjudna – väntar på svar ({invited.length})</div>
+                <ul className="space-y-1">
+                  {invited.map((p) => (
+                    <li key={p.uid} className="flex items-center gap-3 rounded-xl bg-[#D4AF37]/10 px-2 py-1.5">
+                      <GolferAvatar avatarSeed={p.avatarSeed} displayName={p.displayName} size="xs" />
+                      <span className="min-w-0 flex-1 truncate text-sm text-[#112218]">{p.displayName}</span>
+                      {onCancelInvite && (
+                        <button type="button" disabled={busy === `ci-${p.uid}`}
+                          onClick={() => void run(`ci-${p.uid}`, () => onCancelInvite(p.uid))}
+                          className="rounded-full border border-[#112218]/15 px-2.5 py-1 text-[11px] font-semibold text-[#112218]/70 disabled:opacity-50">
+                          Ångra
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {[
-              { label: 'Lägg till vänner', list: quickAdd },
+              { label: 'Bjud in vänner', list: quickAdd },
               ...(morePlayers.length > 0 ? [{ label: 'Andra spelare', list: showMore ? morePlayers : morePlayers.slice(0, 6) }] : []),
             ].map((group) =>
               group.list.length === 0 ? null : (
@@ -176,7 +201,7 @@ export const RoundManageSheet: React.FC<RoundManageSheetProps> = ({
                 className="min-w-0 flex-1 rounded-xl border border-[#112218]/15 px-3 py-2 font-mono text-sm tracking-wider outline-none focus:border-[#166534]" />
               <button type="submit" disabled={!addCode.trim() || busy === 'add'}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-[#166534] px-3 text-xs font-bold text-white disabled:opacity-50">
-                {busy === 'add' ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />} Lägg till
+                {busy === 'add' ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />} Bjud in
               </button>
             </form>
             {addMsg && <p className={`mt-1.5 text-xs ${addMsg.ok ? 'text-[#166534]' : 'text-red-700'}`}>{addMsg.text}</p>}
