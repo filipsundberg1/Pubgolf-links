@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ChevronDown, Compass, Info, LogOut, Map as MapIcon, ShieldCheck, UserPlus, UserRound } from 'lucide-react';
 import { GolferAvatar } from '../GolferAvatar';
+import { BrandMark } from './BrandMark';
 
 interface AppHeaderProps {
   displayName: string;
@@ -62,23 +63,23 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
     'flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium text-[#112218] hover:bg-[#112218]/5';
 
   return (
-    <header className="sticky top-0 z-30 border-b border-[#112218]/10 bg-[#F6F4EE]/95 backdrop-blur-md">
+    <header className="sticky top-0 z-30 border-b border-[#D4AF37]/30 bg-[#112218]/95 text-[#F6F4EE] shadow-[0_2px_12px_rgba(0,0,0,0.18)] backdrop-blur-md">
       <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 py-3">
         <button
           type="button"
           onClick={onGoHome}
-          className="flex items-center gap-2 font-display text-lg font-bold tracking-tight text-[#112218]"
+          className="flex items-center gap-2.5 font-display text-lg font-bold tracking-tight text-[#F6F4EE]"
         >
-          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#112218] text-sm text-[#D4AF37]">
-            ⛳
+          <BrandMark size={34} className="rounded-[10px] ring-1 ring-[#D4AF37]/60" />
+          <span>
+            Pubgolf <span className="text-[#D4AF37]">Links</span>
           </span>
-          Pubgolf Links
         </button>
 
         <div className="flex items-center gap-2">
         <button type="button" onClick={onOpenPlayers}
-          className="inline-flex items-center gap-1.5 rounded-full border border-[#112218]/15 bg-white px-3 py-1.5 text-xs font-semibold text-[#112218] shadow-xs hover:bg-[#112218]/5">
-          <Compass className="h-4 w-4 text-[#166534]" /> <span className="hidden min-[380px]:inline">Utforska</span>
+          className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-semibold text-[#F6F4EE] hover:bg-white/10">
+          <Compass className="h-4 w-4 text-[#D4AF37]" /> <span className="hidden min-[380px]:inline">Utforska</span>
         </button>
         <div className="relative" ref={menuRef}>
           <button
@@ -86,7 +87,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
             onClick={() => setOpen((v) => !v)}
             aria-haspopup="menu"
             aria-expanded={open}
-            className="relative flex items-center gap-2 rounded-full border border-[#112218]/15 bg-white py-1 pl-1 pr-2.5 shadow-xs hover:bg-[#112218]/5"
+            className="relative flex items-center gap-2 rounded-full border border-white/15 bg-white/5 py-1 pl-1 pr-2.5 text-[#F6F4EE] hover:bg-white/10"
           >
             {friendRequests > 0 && (
               <span className="absolute -left-1 -top-1 z-10 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold text-white">
@@ -97,7 +98,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
             <span className="hidden max-w-[110px] truncate text-xs font-semibold sm:inline">
               {displayName}
             </span>
-            <ChevronDown className={`h-4 w-4 text-[#112218]/60 transition ${open ? 'rotate-180' : ''}`} />
+            <ChevronDown className={`h-4 w-4 text-[#F6F4EE]/60 transition ${open ? 'rotate-180' : ''}`} />
           </button>
 
           {open && (

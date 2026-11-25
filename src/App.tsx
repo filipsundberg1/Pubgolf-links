@@ -96,6 +96,7 @@ import {
 import { HERO_CLUBHOUSE_IMG } from './data/defaultTourData';
 import { APIProvider } from '@vis.gl/react-google-maps';
 import { AppHeader } from './components/shell/AppHeader';
+import { BrandMark } from './components/shell/BrandMark';
 import { HomeView } from './components/views/HomeView';
 import { CreateCourseView, type CreateCourseInput } from './components/views/CreateCourseView';
 import { StartRoundView, type StartRoundInput } from './components/views/StartRoundView';
@@ -734,7 +735,7 @@ export default function App() {
 
   if (!authReady) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#F6F4EE] px-4 text-[#112218]">
+      <div className="pg-fairway flex min-h-screen items-center justify-center px-4 text-[#112218]">
         <div className="text-center">
           <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-[#112218] border-t-transparent" />
           <p className="mt-3 font-display text-base font-semibold text-[#112218]">
@@ -751,7 +752,7 @@ export default function App() {
         <img src={HERO_CLUBHOUSE_IMG} alt="" className="absolute inset-0 h-full w-full object-cover opacity-25" />
         <div className="absolute inset-0 bg-gradient-to-b from-[#112218]/40 via-[#112218]/80 to-[#112218]" />
         <main className="relative mx-auto flex w-full max-w-md flex-1 flex-col justify-end px-6 pb-14 pt-24 sm:justify-center">
-          <div className="flex h-14 w-14 items-center justify-center rounded-full border-2 border-[#D4AF37] text-2xl">⛳</div>
+          <BrandMark size={64} className="rounded-2xl ring-2 ring-[#D4AF37]/70" />
           <p className="mt-6 text-xs font-semibold uppercase tracking-[0.3em] text-[#D4AF37]">Pubgolf Tour</p>
           <h1 className="mt-2 font-display text-5xl font-bold leading-[1.05]">Pubgolf Links</h1>
           <p className="mt-3 text-base text-[#F6F4EE]/70">
@@ -1543,7 +1544,7 @@ export default function App() {
 
   return (
     <APIProvider apiKey={import.meta.env.VITE_GOOGLE_MAPS_API_KEY || ''} language="sv" region="SE">
-      <div className="min-h-screen bg-[#F6F4EE] text-[#112218]">
+      <div className="pg-fairway min-h-screen text-[#112218]">
         {syncError && (
           <div className="sticky top-0 z-50 flex items-center justify-center gap-3 border-b border-red-200 bg-red-50 px-4 py-2.5 text-center text-xs text-red-900 shadow-sm md:text-sm">
             <span>{syncError}</span>

@@ -2,6 +2,7 @@ import React from 'react';
 import { ChevronRight, Flag, PlusCircle } from 'lucide-react';
 import type { PubRound } from '../../utils/golfRules';
 import { formatEventDate } from '../../utils/golfRules';
+import { HERO_CLUBHOUSE_IMG } from '../../data/defaultTourData';
 
 interface HomeViewProps {
   firstName: string;
@@ -15,11 +16,17 @@ interface HomeViewProps {
 /** Startsida efter inloggning: två stora val + snabbväg till pågående rundor. */
 export const HomeView: React.FC<HomeViewProps> = ({ firstName, myOpenRounds, titleForRound, onCreate, onPlay, onOpenRound }) => (
   <div className="space-y-6">
-    <div>
-      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#166534]">Klubbhuset</p>
-      <h1 className="mt-1 font-display text-3xl font-bold text-[#112218]">Välkommen, {firstName}!</h1>
-      <p className="mt-1 text-sm text-[#112218]/65">Vad blir det idag?</p>
-    </div>
+    {/* Klubbhuset: bild med mörkgrön ton, guldkant */}
+    <section className="relative overflow-hidden rounded-3xl border border-[#D4AF37]/40 bg-[#112218] shadow-xl">
+      <img src={HERO_CLUBHOUSE_IMG} alt="" className="absolute inset-0 h-full w-full object-cover object-[30%_50%]" />
+      <div className="absolute inset-0 bg-gradient-to-r from-[#112218] via-[#112218]/80 to-[#112218]/25" />
+      <div className="absolute inset-x-0 bottom-0 h-1 bg-gradient-to-r from-[#D4AF37] via-[#D4AF37]/60 to-transparent" />
+      <div className="relative px-6 py-8 sm:px-8 sm:py-10">
+        <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[#D4AF37]">Klubbhuset</p>
+        <h1 className="mt-2 max-w-sm font-display text-3xl font-bold leading-tight text-[#F6F4EE] sm:text-4xl">Välkommen, {firstName}!</h1>
+        <p className="mt-2 max-w-xs text-sm text-[#F6F4EE]/75">Glasen är fyllda och flaggorna uppe. Vad blir det idag?</p>
+      </div>
+    </section>
 
     <div className="grid gap-4 sm:grid-cols-2">
       <button

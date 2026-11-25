@@ -9,12 +9,20 @@
 
   body {
     font-family: var(--font-sans);
-    background-color: #F6F4EE;
+    background-color: #F3F1E8;
     color: #112218;
   }
 
   h1, h2, h3, .font-display {
     font-family: var(--font-display);
+  }
+
+  /* Klippt fairway: breda, diskreta ränder i grönt på krämvit grund */
+  .pg-fairway {
+    background-color: #F3F1E8;
+    background-image:
+      linear-gradient(180deg, rgba(17, 34, 24, 0.07) 0, rgba(17, 34, 24, 0) 280px),
+      repeating-linear-gradient(90deg, rgba(22, 101, 52, 0.032) 0 80px, rgba(22, 101, 52, 0) 80px 160px);
   }
 
   .font-mono-tabular {
