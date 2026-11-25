@@ -17,6 +17,7 @@ import {
   arrayUnion,
   collection,
   deleteDoc,
+  deleteField,
   doc,
   getDoc,
   getDocs,
@@ -41,8 +42,14 @@ import {
 import {
   ADMIN_UIDS,
   APP_ID,
+  MAX_HOLES,
   ROUND_CODE_PATTERN,
+  buildLeaderboard,
   buildScoreCelebrationClip,
+  courseHoleCount,
+  courseHolesInPlay,
+  holeToOverride,
+  holesFromOverrides,
   calculatePlayerCareerStats,
   calculateRoundSummary,
   createBlankHolesForCourse,
@@ -68,8 +75,9 @@ import {
   type ScoreCelebrationClip,
 } from './utils/golfRules';
 import {
-  EMPTY_SIPS,
   coursePayload,
+  emptySips,
+  sanitizeOverride,
   holePayload,
   parseCourse,
   parseHole,
@@ -94,14 +102,76 @@ import { MyProfileView, withProfileDefaults, type ProfileHistoryEntry } from './
 import { AboutView } from './components/views/AboutView';
 import { FriendsView } from './components/views/FriendsView';
 import { AdminView } from './components/views/AdminView';
+import { ExploreView, type Relation } from './components/views/ExploreView';
+import { PlayerProfileView } from './components/views/PlayerProfileView';
+import { CoursePreviewView } from './components/views/CoursePreviewView';
+import { MiniRoundBar } from './components/MiniRoundBar';
+import { draftToOverride, holeToDraft, type HoleDraft } from './components/HoleListEditor';
 
 // Laddas först när de behövs
-const PgaPlayersView = lazy(() => import('./components/PgaPlayersView').then((m) => ({ default: m.PgaPlayersView })));
 const BowlingScoreAnimationOverlay = lazy(() =>
   import('./components/BowlingScoreAnimationOverlay').then((m) => ({ default: m.BowlingScoreAnimationOverlay }))
 );
 
-type View = 'home' | 'create' | 'start' | 'play' | 'round' | 'profile' | 'players' | 'about' | 'friends' | 'admin';
+type View =
+  | 'home'
+  | 'create'
+  | 'start'
+  | 'play'
+  | 'round'
+  | 'profile'
+  | 'players'
+  | 'player'
+  | 'course'
+  | 'editCourse'
+  | 'about'
+  | 'friends'
+  | 'admin';
+
+/** Vyn sparas i adressen (#/runda/PG-XXXX) så att man stannar kvar vid omladdning. */
+type Route = { view: View; id?: string };
+const ROUTE_SLUGS: Record<View, string> = {
+  home: '',
+  create: 'skapa',
+  start: 'starta',
+  play: 'spela',
+  round: 'runda',
+  profile: 'profil',
+  players: 'utforska',
+  player: 'spelare',
+  course: 'bana',
+  editCourse: 'redigera',
+  about: 'om',
+  friends: 'vanner',
+  admin: 'admin',
+};
+const VIEWS_WITH_ID: View[] = ['round', 'start', 'player', 'course', 'editCourse'];
+const parseHash = (): Route => {
+  try {
+    const raw = window.location.hash.replace(/^#\/?/, '');
+    const [slug, ...rest] = raw.split('/');
+    const view = (Object.keys(ROUTE_SLUGS) as View[]).find((v) => ROUTE_SLUGS[v] === slug) || 'home';
+    const id = decodeURIComponent(rest.join('/'));
+    if (VIEWS_WITH_ID.includes(view) && !id) return { view: view === 'round' ? 'play' : 'home' };
+    return { view, id: id || undefined };
+  } catch {
+    return { view: 'home' };
+  }
+};
+const hashFor = (r: Route) => {
+  const slug = ROUTE_SLUGS[r.view];
+  if (!slug) return '#/';
+  return r.id && VIEWS_WITH_ID.includes(r.view) ? `#/${slug}/${encodeURIComponent(r.id)}` : `#/${slug}`;
+};
+
+const LIVE_ROUND_KEY = 'pg-live-round';
+const readLiveRound = () => {
+  try {
+    return localStorage.getItem(LIVE_ROUND_KEY);
+  } catch {
+    return null;
+  }
+};
 
 type ProfileFieldsInput = {
   displayName: string;
@@ -120,20 +190,18 @@ const participantRef = (roundId: string, uid: string) => doc(db, 'rounds', round
 const isPermissionError = (err: unknown) => String((err as Error)?.message || '').includes('Missing or insufficient permissions');
 
 export default function App() {
-  const initialJoinParam = (() => {
+  const [initialJoinParam] = useState(() => {
     try {
       const params = new URLSearchParams(window.location.search);
       return (params.get('join') || params.get('code') || '').trim().toUpperCase();
     } catch {
       return '';
     }
-  })();
+  });
+  const [initialRoute] = useState<Route>(() => (initialJoinParam ? { view: 'play' } : parseHash()));
+  const idFor = (v: View) => (initialRoute.view === v ? initialRoute.id || null : null);
 
-  const [view, setViewState] = useState<View>(initialJoinParam ? 'play' : 'home');
-  const setView = (next: View) => {
-    setViewState(next);
-    window.scrollTo({ top: 0 });
-  };
+  const [view, setViewState] = useState<View>(initialRoute.view);
   const [selectedHoleNum, setSelectedHoleNum] = useState<number>(1);
 
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
@@ -149,9 +217,69 @@ export default function App() {
   const [rounds, setRounds] = useState<PubRound[]>([]);
   const [roundsLoaded, setRoundsLoaded] = useState(false);
   const [participantsByRound, setParticipantsByRound] = useState<Record<string, PlayerTourProfile[]>>({});
-  const [activeRoundId, setActiveRoundId] = useState<string | null>(null);
-  const [startCourseId, setStartCourseId] = useState<string | null>(null);
-  const [selectedPlayerUid, setSelectedPlayerUid] = useState<string>('');
+  const [activeRoundId, setActiveRoundId] = useState<string | null>(idFor('round'));
+  const [startCourseId, setStartCourseId] = useState<string | null>(idFor('start'));
+  const [previewCourseId, setPreviewCourseId] = useState<string | null>(idFor('course'));
+  const [editCourseId, setEditCourseId] = useState<string | null>(idFor('editCourse'));
+  const [selectedPlayerUid, setSelectedPlayerUid] = useState<string>(idFor('player') || '');
+  const [profileTab, setProfileTab] = useState<'rounds' | 'courses'>('rounds');
+  // Rundan man spelar just nu – visas som en rad längst ner när den är nedfälld
+  const [liveRoundId, setLiveRoundIdState] = useState<string | null>(readLiveRound);
+  const setLiveRoundId = (id: string | null) => {
+    setLiveRoundIdState(id);
+    try {
+      if (id) localStorage.setItem(LIVE_ROUND_KEY, id);
+      else localStorage.removeItem(LIVE_ROUND_KEY);
+    } catch {
+      /* privat läge – bara i minnet */
+    }
+  };
+
+  // Senaste vyn utanför rundan – dit man kommer när rundan fälls ner
+  const lastOutsideRoundRef = useRef<Route>(initialRoute.view === 'round' ? { view: 'home' } : initialRoute);
+  const applyRoute = (r: Route) => {
+    if (r.view !== 'round' && r.view !== 'start') lastOutsideRoundRef.current = r;
+    setViewState(r.view);
+    if (!r.id) return;
+    if (r.view === 'round') setActiveRoundId(r.id);
+    if (r.view === 'start') setStartCourseId(r.id);
+    if (r.view === 'course') setPreviewCourseId(r.id);
+    if (r.view === 'editCourse') setEditCourseId(r.id);
+    if (r.view === 'player') setSelectedPlayerUid(r.id);
+  };
+  /** Byt vy och spara den i adressen (bakåtknappen fungerar). */
+  const navigate = (next: View, id?: string, replace = false) => {
+    applyRoute({ view: next, id });
+    const hash = hashFor({ view: next, id });
+    try {
+      if (window.location.hash !== hash || window.location.search) {
+        const url = `${window.location.pathname}${hash}`;
+        if (replace) window.history.replaceState(null, '', url);
+        else window.history.pushState(null, '', url);
+      }
+    } catch {
+      /* ignorera */
+    }
+    window.scrollTo({ top: 0 });
+  };
+  const setView = (next: View) => navigate(next);
+
+  // Bakåt/framåt i webbläsaren
+  useEffect(() => {
+    const onPop = () => applyRoute(parseHash());
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  // Ta bort ?join= ur adressen så att en omladdning inte hoppar tillbaka till Spela
+  useEffect(() => {
+    if (!initialJoinParam) return;
+    try {
+      window.history.replaceState(null, '', `${window.location.pathname}#/spela`);
+    } catch {
+      /* ignorera */
+    }
+  }, [initialJoinParam]);
   const [activeCelebrationClip, setActiveCelebrationClip] = useState<ScoreCelebrationClip | null>(null);
   const [gmpQuotaExceeded, setGmpQuotaExceeded] = useState<boolean>(false);
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -198,7 +326,7 @@ export default function App() {
       setFirebaseUser(user);
       setAuthReady(true);
       if (user) {
-        setSelectedPlayerUid(user.uid);
+        setSelectedPlayerUid((prev) => prev || user.uid);
       } else {
         setMyProfile(null);
         setAllProfiles([]);
@@ -339,7 +467,7 @@ export default function App() {
       onSnapshot(
         query(collection(db, 'courses', cId, 'holes'), where('courseId', '==', cId)),
         (snap) => {
-          if (snap.empty) return;
+          if (snap.empty && snap.metadata.fromCache) return;
           const holes = snap.docs.map((d) => parseHole(d.data())).sort((a, b) => a.holeNumber - b.holeNumber);
           setHolesByCourse((prev) => ({ ...prev, [cId]: holes }));
         },
@@ -367,8 +495,8 @@ export default function App() {
           for (const part of loaded) {
             nextMap[part.uid] = [...part.sips];
             if (!prevMap || rId !== activeRoundIdRef.current) continue;
-            const oldSips = prevMap[part.uid] || EMPTY_SIPS;
-            for (let idx = 0; idx < 9; idx++) {
+            const oldSips = prevMap[part.uid] || [];
+            for (let idx = 0; idx < part.sips.length; idx++) {
               const newVal = part.sips[idx] ?? 0;
               if (newVal > 0 && newVal !== (oldSips[idx] ?? 0)) {
                 const hole = holesForRoundRef.current(rId).find((h) => h.holeNumber === idx + 1);
@@ -403,11 +531,14 @@ export default function App() {
   const currentUid = firebaseUser?.uid || '';
   const courseById = new Map(courses.map((c) => [c.courseId, c]));
   const holesForCourse = (courseId: string, ownerId: string) =>
-    holesByCourse[courseId] || createBlankHolesForCourse(courseId, ownerId);
+    courseHolesInPlay(courseId, ownerId, holesByCourse[courseId], courseHoleCount(courseById.get(courseId)));
   const holesForRound = (roundId: string): PubHole[] => {
     const r = rounds.find((x) => x.roundId === roundId);
     if (!r) return [];
-    return holesForCourse(r.courseId, courseById.get(r.courseId)?.ownerId || r.ownerId);
+    const ownerId = courseById.get(r.courseId)?.ownerId || r.ownerId;
+    // Rundans egna hål (ändrad ordning/lokala ändringar) går före banans
+    if (r.customHoles && r.customHoles.length > 0) return holesFromOverrides(r.customHoles, r.courseId, ownerId);
+    return holesForCourse(r.courseId, ownerId);
   };
   holesForRoundRef.current = holesForRound;
 
@@ -449,7 +580,24 @@ export default function App() {
   const allDataLoaded =
     coursesLoaded &&
     roundsLoaded &&
-    rounds.every((r) => participantsByRound[r.roundId] && holesByCourse[r.courseId]);
+    rounds.every(
+      (r) =>
+        participantsByRound[r.roundId] &&
+        (r.customHoles || holesByCourse[r.courseId] || (coursesLoaded && !courseById.has(r.courseId)))
+    );
+
+  // Efter omladdning direkt in i en runda: välj första ospelade hålet när datan finns
+  const holeInitRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (view !== 'round' || !activeRoundId || holeInitRef.current === activeRoundId) return;
+    const mine = (participantsByRound[activeRoundId] || []).find((p) => p.uid === firebaseUser?.uid);
+    if (!mine) return;
+    holeInitRef.current = activeRoundId;
+    const count = holesForRound(activeRoundId).length || mine.sips.length;
+    const firstOpen = Array.from({ length: count }, (_, i) => mine.sips[i] || 0).findIndex((x) => !x);
+    setSelectedHoleNum(firstOpen >= 0 ? firstOpen + 1 : 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, activeRoundId, participantsByRound, firebaseUser]);
 
   // Ge äldre profiler ett spelar-ID
   useEffect(() => {
@@ -673,7 +821,12 @@ export default function App() {
   });
 
   /** Min profil som deltagarpost i en ny runda. */
-  const newParticipantFor = (profile: ReusablePlayerProfile | null, playerUid: string, roundId: string): PlayerTourProfile => ({
+  const newParticipantFor = (
+    profile: ReusablePlayerProfile | null,
+    playerUid: string,
+    roundId: string,
+    holeCount = 9
+  ): PlayerTourProfile => ({
     ...(profile || {
       uid: playerUid,
       appId: APP_ID,
@@ -690,7 +843,7 @@ export default function App() {
     uid: playerUid,
     handicap: careerStatsByUid[playerUid]?.computedHandicap || profile?.handicap || formatHandicap(STARTING_HANDICAP),
     courseId: roundId,
-    sips: [...EMPTY_SIPS],
+    sips: emptySips(holeCount),
     totalSips: 0,
     totalToPar: 0,
     thruHoles: 0,
@@ -701,10 +854,13 @@ export default function App() {
   const titleForRound = (r: PubRound) => courseById.get(r.courseId)?.title || r.courseTitle;
   const byDateDesc = (a: PubRound, b: PubRound) => b.eventDate.localeCompare(a.eventDate);
   const myActiveRounds = rounds.filter((r) => r.status === 'active').sort(byDateDesc);
+  const myFinishedRounds = rounds.filter((r) => r.status === 'finished').sort(byDateDesc);
   const myCourses = courses.filter((c) => c.ownerId === uid).sort((a, b) => a.title.localeCompare(b.title, 'sv'));
-  const publicCourses = courses
-    .filter((c) => c.isPublic && c.ownerId !== uid)
+  // Alla banor man kan spela: alla öppna banor (även egna) + mina privata
+  const playableCourses = courses
+    .filter((c) => c.isPublic || c.ownerId === uid)
     .sort((a, b) => a.title.localeCompare(b.title, 'sv'));
+  const holeCountFor = (c: PubCourse) => courseHoleCount(c);
 
   const myHistory: ProfileHistoryEntry[] = rounds
     .map((r) => {
@@ -772,9 +928,19 @@ export default function App() {
   };
 
   // ---- Banor ----
+  const holesFromDrafts = (drafts: HoleDraft[], courseId: string): PubHole[] =>
+    drafts.slice(0, MAX_HOLES).map((d, i) => ({ ...draftToOverride(d, i), holeNumber: i + 1, courseId, ownerId: uid }));
+
+  const writeCourseHoles = async (courseId: string, holes: PubHole[]) => {
+    const batch = writeBatch(db);
+    for (const h of holes) batch.set(doc(db, 'courses', courseId, 'holes', `hole-${h.holeNumber}`), holePayload(h, courseId, uid));
+    await batch.commit();
+  };
+
   const handleCreateCourse = async (input: CreateCourseInput): Promise<string> => {
     const ownerName = myProfile?.displayName || firebaseUser.displayName || 'Banarkitekt';
     const courseId = `course-${Date.now()}`;
+    const holes = holesFromDrafts(input.holes, courseId);
     const course: PubCourse = {
       courseId,
       appId: APP_ID,
@@ -787,37 +953,62 @@ export default function App() {
       ownerName,
       gameMode: 'single',
       isPublic: input.isPublic,
+      holeCount: holes.length,
     };
-    const text = (v: string, fallback: string, max: number) => (v.trim().length >= 2 ? v.trim().slice(0, max) : fallback);
-    const holes = createBlankHolesForCourse(courseId, uid).map((hole) => {
-      const draft = input.holes.find((d) => d.holeNumber === hole.holeNumber);
-      if (!draft) return hole;
-      const hasRule = draft.hazardTitle.trim().length >= 2 || draft.hazardRule.trim().length >= 2;
-      return {
-        ...hole,
-        pubName: text(draft.pubName, `Hål ${hole.holeNumber}`, 80),
-        pubAddress: text(draft.pubAddress, hole.pubAddress, 120),
-        drinkType: draft.drinkType,
-        drinkName: text(draft.drinkName, hole.drinkName, 80),
-        volumeCl: Math.max(2, Math.min(100, Math.round(draft.volumeCl) || 40)),
-        par: Math.max(1, Math.min(5, Math.round(draft.par) || 3)),
-        hazardTitle: hasRule ? text(draft.hazardTitle, 'Hålets regel', 80) : hole.hazardTitle,
-        hazardRule: hasRule ? text(draft.hazardRule, draft.hazardTitle.trim() || 'Se rubriken.', 180) : hole.hazardRule,
-        caddieTip: 'Lycka till – och drick vatten mellan hålen!',
-      };
-    });
-
     try {
       await setDoc(doc(db, 'courses', courseId), coursePayload(course));
-      const batch = writeBatch(db);
-      for (const h of holes) batch.set(doc(db, 'courses', courseId, 'holes', `hole-${h.holeNumber}`), holePayload(h, courseId, uid));
-      await batch.commit();
+      await writeCourseHoles(courseId, holes);
     } catch (error) {
       fail(error, OperationType.CREATE, `courses/${courseId}`);
     }
     setCourses((prev) => (prev.some((c) => c.courseId === courseId) ? prev : [course, ...prev]));
     setHolesByCourse((prev) => ({ ...prev, [courseId]: holes }));
     return courseId;
+  };
+
+  /** Spara en befintlig bana (bara den som skapat banan). */
+  const handleSaveCourse = async (courseId: string, input: CreateCourseInput) => {
+    const existing = courseById.get(courseId);
+    if (!existing || existing.ownerId !== uid) throw new Error('Bara den som skapat banan kan ändra den.');
+    const holes = holesFromDrafts(input.holes, courseId);
+    const updated: PubCourse = {
+      ...existing,
+      title: input.title,
+      subtitle: input.subtitle,
+      city: input.city,
+      isPublic: input.isPublic,
+      holeCount: holes.length,
+    };
+    const previousCount = Math.max(courseHoleCount(existing), (holesByCourse[courseId] || []).length);
+    try {
+      await setDoc(doc(db, 'courses', courseId), coursePayload(updated));
+      await writeCourseHoles(courseId, holes);
+    } catch (error) {
+      fail(error, OperationType.WRITE, `courses/${courseId}`);
+    }
+    // Hål som inte längre används tas bort (banans antal hål styr ändå vad som spelas)
+    for (let n = holes.length + 1; n <= previousCount; n++) {
+      deleteDoc(doc(db, 'courses', courseId, 'holes', `hole-${n}`)).catch(() => undefined);
+    }
+    setCourses((prev) => prev.map((c) => (c.courseId === courseId ? updated : c)));
+    setHolesByCourse((prev) => ({ ...prev, [courseId]: holes }));
+  };
+
+  const handleDeleteCourse = async (courseId: string) => {
+    const existing = courseById.get(courseId);
+    if (!existing || existing.ownerId !== uid) return;
+    const count = Math.max(MAX_HOLES, (holesByCourse[courseId] || []).length);
+    await Promise.all(
+      Array.from({ length: count }, (_, i) =>
+        deleteDoc(doc(db, 'courses', courseId, 'holes', `hole-${i + 1}`)).catch(() => undefined)
+      )
+    );
+    try {
+      await deleteDoc(doc(db, 'courses', courseId));
+    } catch (error) {
+      fail(error, OperationType.DELETE, `courses/${courseId}`);
+    }
+    setCourses((prev) => prev.filter((c) => c.courseId !== courseId));
   };
 
   const handleSaveCourseMeta = async (updated: PubCourse) => {
@@ -827,22 +1018,6 @@ export default function App() {
       await setDoc(doc(db, 'courses', updated.courseId), coursePayload(updated));
     } catch (error) {
       fail(error, OperationType.WRITE, `courses/${updated.courseId}`);
-    }
-  };
-
-  const handleSaveHoleConfig = async (updatedHole: PubHole) => {
-    if (!activeCourseDoc || activeCourseDoc.ownerId !== uid) return;
-    const cId = activeCourseDoc.courseId;
-    setHolesByCourse((prev) => ({
-      ...prev,
-      [cId]: (prev[cId] || createBlankHolesForCourse(cId, uid)).map((h) =>
-        h.holeNumber === updatedHole.holeNumber ? updatedHole : h
-      ),
-    }));
-    try {
-      await setDoc(doc(db, 'courses', cId, 'holes', `hole-${updatedHole.holeNumber}`), holePayload(updatedHole, cId, uid));
-    } catch (error) {
-      fail(error, OperationType.WRITE, `courses/${cId}/holes/hole-${updatedHole.holeNumber}`);
     }
   };
 
@@ -870,11 +1045,17 @@ export default function App() {
       locked: false,
       status: 'active',
     };
-    const holes = holesForCourse(courseId, course.ownerId);
+    const courseHoles = holesForCourse(courseId, course.ownerId);
+    // Baklänges = rundans egna hål i omvänd ordning. Banan ändras inte.
+    if (input.reverse && courseHoles.length > 1) round.customHoles = [...courseHoles].reverse().map(holeToOverride);
+    const holes = round.customHoles ? holesFromOverrides(round.customHoles, courseId, course.ownerId) : courseHoles;
     try {
       const batch = writeBatch(db);
       batch.set(roundRef(roundId), roundPayload(round));
-      batch.set(participantRef(roundId, uid), roundParticipantPayload(newParticipantFor(myProfile, uid, roundId), roundId, holes));
+      batch.set(
+        participantRef(roundId, uid),
+        roundParticipantPayload(newParticipantFor(myProfile, uid, roundId, holes.length), roundId, holes)
+      );
       await batch.commit();
     } catch (error) {
       fail(error, OperationType.CREATE, `rounds/${roundId}`);
@@ -903,13 +1084,16 @@ export default function App() {
     }
     if (round.status === 'deleted') return { ok: false, message: 'Rundan är raderad av ägaren.' };
     if (round.locked) return { ok: false, message: 'Rundan är låst – be ägaren låsa upp den eller lägga till dig.' };
-    const holes = holesForCourse(round.courseId, courseById.get(round.courseId)?.ownerId || round.ownerId);
+    const joinOwner = courseById.get(round.courseId)?.ownerId || round.ownerId;
+    const holes = round.customHoles
+      ? holesFromOverrides(round.customHoles, round.courseId, joinOwner)
+      : holesForCourse(round.courseId, joinOwner);
     try {
       const batch = writeBatch(db);
       batch.update(roundRef(round.roundId), { memberIds: arrayUnion(uid), updatedAt: serverTimestamp() });
       batch.set(
         participantRef(round.roundId, uid),
-        roundParticipantPayload(newParticipantFor(myProfile, uid, round.roundId), round.roundId, holes)
+        roundParticipantPayload(newParticipantFor(myProfile, uid, round.roundId, holes.length), round.roundId, holes)
       );
       await batch.commit();
     } catch (error) {
@@ -933,9 +1117,10 @@ export default function App() {
       fail(error, OperationType.WRITE, `rounds/${roundId}`);
     }
     setRounds((prev) => prev.filter((r) => r.roundId !== roundId));
+    if (liveRoundId === roundId) setLiveRoundId(null);
     if (activeRoundId === roundId) {
       setActiveRoundId(null);
-      setView('play');
+      navigate('play', undefined, true);
     }
   };
 
@@ -965,7 +1150,11 @@ export default function App() {
       batch.update(roundRef(roundId), { memberIds: arrayUnion(profile.uid), updatedAt: serverTimestamp() });
       batch.set(
         participantRef(roundId, profile.uid),
-        roundParticipantPayload(newParticipantFor(profile, profile.uid, roundId), roundId, holesByRoundId[roundId] || [])
+        roundParticipantPayload(
+          newParticipantFor(profile, profile.uid, roundId, (holesByRoundId[roundId] || []).length || 9),
+          roundId,
+          holesByRoundId[roundId] || []
+        )
       );
       await batch.commit();
     } catch (error) {
@@ -1006,9 +1195,40 @@ export default function App() {
       fail(error, OperationType.WRITE, `rounds/${roundId}`);
     }
     if (!keepMine) setRounds((prev) => prev.filter((r) => r.roundId !== roundId));
+    if (liveRoundId === roundId) setLiveRoundId(null);
     setActiveRoundId(null);
-    setView('play');
+    navigate('play', undefined, true);
     showNotice('Rundan är raderad för alla.');
+  };
+
+  /** Ägaren avslutar för alla; övriga stänger rundan för sig själva. Score kan rättas efteråt. */
+  const handleFinishRound = async (roundId: string) => {
+    const r = rounds.find((x) => x.roundId === roundId);
+    if (r && r.ownerId === uid && r.status === 'active') {
+      await updateRound(roundId, { status: 'finished', locked: true });
+      setRounds((prev) => prev.map((x) => (x.roundId === roundId ? { ...x, status: 'finished', locked: true } : x)));
+      showNotice('Rundan är avslutad. Bra kämpat!');
+    } else {
+      showNotice('Klart! Ditt resultat är sparat.');
+    }
+    if (liveRoundId === roundId) setLiveRoundId(null);
+    navigate('play', undefined, true);
+  };
+
+  const handleReopenRound = async (roundId: string) => {
+    await updateRound(roundId, { status: 'active', locked: false });
+    setRounds((prev) => prev.map((x) => (x.roundId === roundId ? { ...x, status: 'active', locked: false } : x)));
+    setLiveRoundId(roundId);
+  };
+
+  /** Rundans egna hål – ändrar aldrig banan. null = tillbaka till banans original. */
+  const handleSaveRoundHoles = async (roundId: string, drafts: HoleDraft[] | null) => {
+    const r = rounds.find((x) => x.roundId === roundId);
+    if (!r || r.ownerId !== uid) return;
+    const customHoles = drafts ? drafts.slice(0, MAX_HOLES).map((d, i) => sanitizeOverride(draftToOverride(d, i))) : undefined;
+    await updateRound(roundId, { customHoles: customHoles || deleteField() });
+    setRounds((prev) => prev.map((x) => (x.roundId === roundId ? { ...x, customHoles } : x)));
+    showNotice(drafts ? 'Hålen är ändrade för den här rundan.' : 'Rundan följer banan igen.');
   };
 
   const handleSetCountsForHcp = async (roundId: string, counts: boolean) => {
@@ -1045,9 +1265,9 @@ export default function App() {
 
   // ---- Score ----
   const handleUpdateHoleSips = (holeNumber: number, newSips: number) => {
-    if (!activeRound || !me || activeRound.status !== 'active') return;
+    if (!activeRound || !me || activeRound.status === 'deleted') return;
     const rId = activeRound.roundId;
-    const nextSips = [...me.sips];
+    const nextSips = Array.from({ length: Math.max(activeHoles.length, me.sips.length) }, (_, i) => me.sips[i] || 0);
     nextSips[holeNumber - 1] = newSips;
     const summary = calculateRoundSummary(nextSips, activeHoles);
 
@@ -1119,11 +1339,16 @@ export default function App() {
   const friendRequests = profileList(
     followsIn.filter((f) => !f.dismissed && !followingIds.has(f.followerId)).map((f) => f.followerId)
   );
-  const playedWith = new Set<string>();
-  for (const r of rounds) for (const p of participantsByRound[r.roundId] || []) playedWith.add(p.uid);
+  const byRecent = (a: ReusablePlayerProfile, b: ReusablePlayerProfile) => (b.lastActiveMs || 0) - (a.lastActiveMs || 0);
+  // Alla andra spelare man inte lagt till – senast aktiva först
   const friendSuggestions = profileList(
-    [...playedWith].filter((id) => id !== uid && !followingIds.has(id) && !followerIds.has(id))
-  );
+    allProfiles.map((p) => p.uid).filter((id) => id !== uid && !followingIds.has(id) && !followerIds.has(id) && !bannedUids.has(id))
+  ).sort(byRecent);
+  const relationFor = (other: string): Relation => {
+    if (other === uid) return 'me';
+    if (followingIds.has(other)) return followerIds.has(other) ? 'friend' : 'following';
+    return followerIds.has(other) ? 'follower' : 'none';
+  };
 
   const followRef = (follower: string, target: string) => doc(db, 'follows', `${follower}_${target}`);
   const handleFollow = async (target: string) => {
@@ -1216,20 +1441,64 @@ export default function App() {
   };
   const amBanned = bannedUids.has(uid);
 
-  const openRound = (roundId: string) => {
-    setActiveRoundId(roundId);
+  const openRound = (roundId: string, replace = false) => {
     const mine = (participantsByRound[roundId] || []).find((p) => p.uid === uid);
-    const firstOpen = mine ? mine.sips.findIndex((s) => !s) : 0;
+    const count = holesForRound(roundId).length || 9;
+    const firstOpen = mine ? Array.from({ length: count }, (_, i) => mine.sips[i] || 0).findIndex((x) => !x) : 0;
     setSelectedHoleNum(firstOpen >= 0 ? firstOpen + 1 : 1);
-    setView('round');
+    holeInitRef.current = mine ? roundId : null;
+    const r = rounds.find((x) => x.roundId === roundId);
+    if (!r || r.status === 'active') setLiveRoundId(roundId);
+    navigate('round', roundId, replace);
   };
 
-  const openStart = (courseId: string) => {
-    setStartCourseId(courseId);
-    setView('start');
+  /** Fäll ner rundan: tillbaka till förra vyn, rundan ligger kvar som en rad längst ner. */
+  const minimizeRound = () => {
+    if (activeRoundId && activeRound?.status === 'active') setLiveRoundId(activeRoundId);
+    const back = lastOutsideRoundRef.current;
+    navigate(back.view, back.id);
+  };
+
+  const openStart = (courseId: string) => navigate('start', courseId);
+  const openCourse = (courseId: string) => navigate('course', courseId);
+  const openPlayer = (playerUid: string) => {
+    if (playerUid === uid) {
+      setProfileTab('rounds');
+      navigate('profile');
+    } else navigate('player', playerUid);
   };
 
   const startCourse = startCourseId ? courseById.get(startCourseId) || null : null;
+  const previewCourse = previewCourseId ? courseById.get(previewCourseId) || null : null;
+  const editCourse = editCourseId ? courseById.get(editCourseId) || null : null;
+  const inspectedPlayer = selectedPlayerUid ? profileByUid.get(selectedPlayerUid) || null : null;
+
+  // Nedfälld runda längst ner
+  const liveRound = liveRoundId ? rounds.find((r) => r.roundId === liveRoundId && r.status === 'active') || null : null;
+  const liveParts = liveRound ? (participantsByRound[liveRound.roundId] || []).map(withProfile) : [];
+  const liveMe = liveParts.find((p) => p.uid === uid) || null;
+  const showMiniBar = !!liveRound && !!liveMe && view !== 'round';
+  const miniBar = (() => {
+    if (!showMiniBar || !liveRound || !liveMe) return null;
+    const holes = holesByRoundId[liveRound.roundId] || [];
+    const board = buildLeaderboard(liveParts, holes);
+    const mine = board.find((e) => e.player.uid === uid);
+    const leader = board[0];
+    const nextHole = Array.from({ length: holes.length }, (_, i) => liveMe.sips[i] || 0).findIndex((x) => !x);
+    const leaderLine =
+      liveParts.length < 2
+        ? `${liveParts.length} spelare`
+        : leader?.player.uid === uid
+          ? 'Du leder!'
+          : `Leder: ${leader?.player.displayName.split(' ')[0]} ${leader?.summary.toParFormatted}`;
+    return {
+      title: titleForRound(liveRound),
+      holeLabel: nextHole >= 0 ? `Hål ${nextHole + 1}/${holes.length}` : 'Alla hål spelade',
+      toPar: mine?.summary.toParFormatted || 'E',
+      position: mine?.positionLabel || '–',
+      leaderLine,
+    };
+  })();
   const firstName = (myProfileFields.displayName || 'golfare').split(' ')[0];
   const myPlayerCode = myProfile?.playerCode || '';
   const tourPlayers: PlayerTourProfile[] = mergeTourProfiles(allProfiles, [], myProfile, 'none', uid).map(withProfile);
@@ -1267,11 +1536,15 @@ export default function App() {
           onOpenFriends={() => setView('friends')}
           onOpenAdmin={() => setView('admin')}
           onGoHome={() => setView('home')}
-          onOpenMyProfile={() => setView('profile')}
-          onOpenPlayers={() => {
-            setSelectedPlayerUid(uid);
-            setView('players');
+          onOpenMyProfile={() => {
+            setProfileTab('rounds');
+            setView('profile');
           }}
+          onOpenMyCourses={() => {
+            setProfileTab('courses');
+            setView('profile');
+          }}
+          onOpenPlayers={() => setView('players')}
           onOpenAbout={() => setView('about')}
           onSignOut={handleGoogleSignOut}
         />
@@ -1312,7 +1585,8 @@ export default function App() {
           </div>
         )}
 
-        <main id="top" className={`mx-auto px-4 pt-5 pb-10 ${view === 'players' ? 'max-w-6xl' : 'max-w-3xl'}`}>
+        {showMiniBar && <style>{':root{--pg-mini-bar:76px}'}</style>}
+        <main id="top" className={`mx-auto max-w-3xl px-4 pt-5 ${showMiniBar ? 'pb-28' : 'pb-10'}`}>
           {view === 'home' && (
             <HomeView
               firstName={firstName}
@@ -1320,7 +1594,7 @@ export default function App() {
               titleForRound={titleForRound}
               onCreate={() => setView('create')}
               onPlay={() => setView('play')}
-              onOpenRound={openRound}
+              onOpenRound={(id) => openRound(id)}
             />
           )}
 
@@ -1330,10 +1604,73 @@ export default function App() {
               onBack={() => setView('home')}
               onCreate={async (input) => {
                 const courseId = await handleCreateCourse(input);
-                openStart(courseId);
+                showNotice('Banan är skapad!');
+                navigate('course', courseId, true);
               }}
             />
           )}
+
+          {view === 'editCourse' &&
+            (editCourse && editCourse.ownerId === uid ? (
+              coursesLoaded && holesByCourse[editCourse.courseId] ? (
+                <CreateCourseView
+                  key={editCourse.courseId}
+                  defaultCity={editCourse.city}
+                  initial={{
+                    title: editCourse.title,
+                    subtitle: editCourse.subtitle,
+                    city: editCourse.city,
+                    isPublic: !!editCourse.isPublic,
+                    holes: holesForCourse(editCourse.courseId, editCourse.ownerId).map(holeToDraft),
+                  }}
+                  onBack={() => openCourse(editCourse.courseId)}
+                  onCreate={async (input) => {
+                    await handleSaveCourse(editCourse.courseId, input);
+                    showNotice('Banan är sparad.');
+                    navigate('course', editCourse.courseId, true);
+                  }}
+                  onDelete={async () => {
+                    await handleDeleteCourse(editCourse.courseId);
+                    showNotice('Banan är borttagen.');
+                    setProfileTab('courses');
+                    navigate('profile', undefined, true);
+                  }}
+                />
+              ) : (
+                <p className="text-sm text-[#112218]/60">Banan laddas…</p>
+              )
+            ) : (
+              <div className="rounded-3xl border border-[#112218]/10 bg-white p-8 text-center shadow-xs">
+                <p className="text-sm text-[#112218]/70">
+                  {coursesLoaded ? 'Bara den som skapat banan kan ändra den.' : 'Banan laddas…'}
+                </p>
+                <button type="button" onClick={() => setView('play')} className="mt-4 rounded-full bg-[#112218] px-5 py-2 text-sm font-semibold text-[#F6F4EE]">
+                  Till Spela
+                </button>
+              </div>
+            ))}
+
+          {view === 'course' &&
+            (previewCourse && (previewCourse.isPublic || previewCourse.ownerId === uid || isAdmin) ? (
+              <CoursePreviewView
+                key={previewCourse.courseId}
+                course={previewCourse}
+                holes={holesForCourse(previewCourse.courseId, previewCourse.ownerId)}
+                isOwner={previewCourse.ownerId === uid}
+                canStart={!amBanned && (previewCourse.isPublic === true || previewCourse.ownerId === uid)}
+                onBack={() => (window.history.length > 1 ? window.history.back() : setView('play'))}
+                onStart={() => openStart(previewCourse.courseId)}
+                onEdit={() => navigate('editCourse', previewCourse.courseId)}
+                onOpenOwner={() => openPlayer(previewCourse.ownerId)}
+              />
+            ) : (
+              <div className="rounded-3xl border border-[#112218]/10 bg-white p-8 text-center shadow-xs">
+                <p className="text-sm text-[#112218]/70">{coursesLoaded ? 'Banan finns inte eller är privat.' : 'Banan laddas…'}</p>
+                <button type="button" onClick={() => setView('play')} className="mt-4 rounded-full bg-[#112218] px-5 py-2 text-sm font-semibold text-[#F6F4EE]">
+                  Till Spela
+                </button>
+              </div>
+            ))}
 
           {view === 'start' &&
             (startCourse ? (
@@ -1341,12 +1678,13 @@ export default function App() {
                 course={startCourse}
                 holes={holesForCourse(startCourse.courseId, startCourse.ownerId)}
                 isCourseOwner={startCourse.ownerId === uid}
-                onBack={() => setView('play')}
+                onBack={() => (window.history.length > 1 ? window.history.back() : setView('play'))}
                 onStart={async (input) => {
                   const roundId = await handleStartRound(startCourse.courseId, input);
-                  setActiveRoundId(roundId);
                   setSelectedHoleNum(1);
-                  setView('round');
+                  holeInitRef.current = roundId;
+                  setLiveRoundId(roundId);
+                  navigate('round', roundId, true);
                 }}
               />
             ) : (
@@ -1356,14 +1694,16 @@ export default function App() {
           {view === 'play' && (
             <PlayView
               myRounds={myActiveRounds}
-              myCourses={myCourses}
-              publicCourses={publicCourses}
+              finishedRounds={myFinishedRounds}
+              courses={playableCourses}
               currentUid={uid}
               titleForRound={titleForRound}
+              holeCountFor={holeCountFor}
               initialCode={initialJoinParam}
               onBack={() => setView('home')}
-              onOpenRound={openRound}
+              onOpenRound={(id) => openRound(id)}
               onStartCourse={openStart}
+              onPreviewCourse={openCourse}
               onCreateCourse={() => setView('create')}
               onJoin={handleJoinByCode}
             />
@@ -1378,29 +1718,25 @@ export default function App() {
                 me={me}
                 players={activeParticipants}
                 isOwner={activeRound.ownerId === uid}
-                isCourseOwner={activeCourseDoc?.ownerId === uid}
-                readOnly={activeRound.status === 'deleted'}
+                status={activeRound.status}
                 locked={activeRound.locked}
+                hasCustomHoles={!!activeRound.customHoles?.length}
                 selectedHoleNum={selectedHoleNum}
                 onSelectHole={setSelectedHoleNum}
-                onBack={() => setView('play')}
+                onMinimize={minimizeRound}
                 onUpdateHoleSips={handleUpdateHoleSips}
-                onSaveHoleConfig={handleSaveHoleConfig}
                 onSaveCourseMeta={async (c) => {
-                  // Spelform hör till rundan, övrigt till banan
-                  if (c.courseId === activeRound.roundId) {
-                    if (activeRound.ownerId === uid && c.gameMode && c.gameMode !== activeRound.gameMode) {
-                      await updateRound(activeRound.roundId, { gameMode: c.gameMode as PubGolfGameMode });
-                    }
-                    return;
+                  // Spelform hör till rundan. Banan ändras aldrig från en runda.
+                  if (activeRound.ownerId === uid && c.gameMode && c.gameMode !== activeRound.gameMode) {
+                    await updateRound(activeRound.roundId, { gameMode: c.gameMode as PubGolfGameMode });
                   }
-                  await handleSaveCourseMeta(c);
                 }}
+                onSaveRoundHoles={(drafts) => handleSaveRoundHoles(activeRound.roundId, drafts)}
                 onAssignTeam={handleAssignTeam}
-                onInspectPlayer={(playerUid) => {
-                  setSelectedPlayerUid(playerUid);
-                  setView('players');
-                }}
+                onInspectPlayer={openPlayer}
+                onFinish={() => handleFinishRound(activeRound.roundId)}
+                onReopen={() => handleReopenRound(activeRound.roundId)}
+                onLeave={() => leaveRound(activeRound.roundId)}
                 manageSheet={
                   <RoundManageSheet
                     round={activeRound}
@@ -1415,6 +1751,16 @@ export default function App() {
                     quickAdd={[...friends, ...followingOnly].filter(
                       (p) => !activeRound.memberIds.includes(p.uid) && !!p.playerCode
                     )}
+                    morePlayers={allProfiles
+                      .filter(
+                        (p) =>
+                          p.uid !== uid &&
+                          !!p.playerCode &&
+                          !activeRound.memberIds.includes(p.uid) &&
+                          !followingIds.has(p.uid) &&
+                          !bannedUids.has(p.uid)
+                      )
+                      .sort(byRecent)}
                     onRemovePlayer={(playerUid) => handleRemovePlayer(activeRound.roundId, playerUid)}
                     onToggleCoursePublic={async (isPublic) => {
                       if (activeCourseDoc) await handleSaveCourseMeta({ ...activeCourseDoc, isPublic });
@@ -1427,7 +1773,13 @@ export default function App() {
               />
             ) : (
               <div className="rounded-3xl border border-[#112218]/10 bg-white p-8 text-center shadow-xs">
-                <p className="text-sm text-[#112218]/70">Rundan laddas eller finns inte längre.</p>
+                {!roundsLoaded || (activeRound && !participantsByRound[activeRound.roundId]) ? (
+                  <div className="flex items-center justify-center gap-2 text-sm text-[#112218]/70">
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#112218] border-t-transparent" /> Laddar rundan…
+                  </div>
+                ) : (
+                  <p className="text-sm text-[#112218]/70">Rundan finns inte längre, eller så är du inte med i den.</p>
+                )}
                 <button type="button" onClick={() => setView('play')} className="mt-4 rounded-full bg-[#112218] px-5 py-2 text-sm font-semibold text-[#F6F4EE]">
                   Till Spela
                 </button>
@@ -1436,36 +1788,57 @@ export default function App() {
 
           {view === 'profile' && (
             <MyProfileView
+              key={profileTab}
               profile={myProfileFields}
               playerCode={myPlayerCode}
               stats={careerStatsByUid[uid]}
               history={myHistory}
               onBack={() => setView('home')}
               onSave={handleSaveMyProfile}
-              onOpenRound={openRound}
+              onOpenRound={(id) => openRound(id)}
+              myCourses={myCourses}
+              holeCountFor={holeCountFor}
+              initialTab={profileTab}
+              onOpenCourse={openCourse}
+              onEditCourse={(id) => navigate('editCourse', id)}
+              onStartCourse={openStart}
+              onCreateCourse={() => setView('create')}
             />
           )}
 
           {view === 'players' && (
-            <div className="space-y-4">
-              <button type="button" onClick={() => setView('home')} className="text-sm font-semibold text-[#166534]">
-                ← Tillbaka
-              </button>
-              <Suspense fallback={<p className="text-sm text-[#112218]/60">Laddar…</p>}>
-                <PgaPlayersView
-                  players={tourPlayers}
-                  careerStatsByUid={careerStatsByUid}
-                  activePlayer={myTourPlayer}
-                  selectedPlayerUid={selectedPlayerUid}
-                  onSelectPlayerUid={(playerUid) => setSelectedPlayerUid(playerUid)}
-                  onSelectCourseFromHistory={(roundId) => {
-                    if (rounds.some((r) => r.roundId === roundId)) openRound(roundId);
-                  }}
-                  onSaveMyProfile={handleSaveMyProfile}
-                />
-              </Suspense>
-            </div>
+            <ExploreView
+              players={allProfiles
+                .filter((p) => !bannedUids.has(p.uid))
+                .map((p) => ({ ...p, wins: careerStatsByUid[p.uid]?.wins || p.wins || 0 }))}
+              relationFor={relationFor}
+              handicapFor={(id) => careerStatsByUid[id]?.computedHandicap || profileByUid.get(id)?.handicap || '54.0'}
+              courseCountFor={(id) => courses.filter((c) => c.ownerId === id && c.isPublic).length}
+              onBack={() => setView('home')}
+              onOpenPlayer={openPlayer}
+              onFollow={handleFollow}
+            />
           )}
+
+          {view === 'player' &&
+            (inspectedPlayer ? (
+              <PlayerProfileView
+                key={inspectedPlayer.uid}
+                player={{ ...inspectedPlayer, wins: careerStatsByUid[inspectedPlayer.uid]?.wins || inspectedPlayer.wins || 0 }}
+                stats={careerStatsByUid[inspectedPlayer.uid]}
+                handicap={careerStatsByUid[inspectedPlayer.uid]?.computedHandicap || inspectedPlayer.handicap || '54.0'}
+                relation={relationFor(inspectedPlayer.uid)}
+                courses={courses
+                  .filter((c) => c.ownerId === inspectedPlayer.uid && (c.isPublic || isAdmin))
+                  .sort((a, b) => a.title.localeCompare(b.title, 'sv'))}
+                holeCountFor={holeCountFor}
+                onBack={() => (window.history.length > 1 ? window.history.back() : setView('players'))}
+                onFollow={() => handleFollow(inspectedPlayer.uid)}
+                onOpenCourse={openCourse}
+              />
+            ) : (
+              <p className="text-sm text-[#112218]/60">Spelaren laddas…</p>
+            ))}
 
           {view === 'about' && <AboutView onBack={() => setView('home')} />}
 
@@ -1483,10 +1856,7 @@ export default function App() {
               onUnfollow={handleUnfollow}
               onRemoveFriend={handleRemoveFriend}
               onDismissRequest={handleDismissRequest}
-              onOpenPlayer={(id) => {
-                setSelectedPlayerUid(id);
-                setView('players');
-              }}
+              onOpenPlayer={openPlayer}
             />
           )}
 
@@ -1500,10 +1870,7 @@ export default function App() {
               currentUid={uid}
               handicapFor={(id) => careerStatsByUid[id]?.computedHandicap || profileByUid.get(id)?.handicap || '54.0'}
               onBack={() => setView('home')}
-              onOpenPlayer={(id) => {
-                setSelectedPlayerUid(id);
-                setView('players');
-              }}
+              onOpenPlayer={openPlayer}
               onToggleBan={handleToggleBan}
               onDeleteProfile={handleAdminDeleteProfile}
               onDeleteRound={handleAdminDeleteRound}
@@ -1511,6 +1878,17 @@ export default function App() {
             />
           )}
         </main>
+
+        {miniBar && liveRound && (
+          <MiniRoundBar
+            title={miniBar.title}
+            holeLabel={miniBar.holeLabel}
+            toPar={miniBar.toPar}
+            position={miniBar.position}
+            leaderLine={miniBar.leaderLine}
+            onOpen={() => openRound(liveRound.roundId)}
+          />
+        )}
       </div>
     </APIProvider>
   );

@@ -178,7 +178,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
               <li key={r.roundId} className="flex items-center gap-3 rounded-2xl border border-[#112218]/10 bg-white px-3 py-2.5 shadow-xs">
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-semibold text-[#112218]">
-                    {r.courseTitle} {r.status === 'deleted' && <span className="text-xs font-bold text-red-700">· raderad</span>}
+                    {r.courseTitle} {r.status === 'deleted' && <span className="text-xs font-bold text-red-700">· raderad</span>}{r.status === 'finished' && <span className="text-xs font-bold text-[#166534]"> · avslutad</span>}
                   </div>
                   <div className="truncate text-xs text-[#112218]/55">
                     <span className="font-mono">{r.roundId}</span> · {formatEventDate(r.eventDate)} · ägare {nameByUid.get(r.ownerId) || r.ownerName} · {r.memberIds.length} spelare{r.locked ? ' · låst' : ''}

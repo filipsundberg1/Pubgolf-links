@@ -15,6 +15,8 @@ interface RoundManageSheetProps {
   onAddPlayer: (playerCode: string) => Promise<{ ok: boolean; message: string }>;
   /** Vänner (och folk man följer) som inte är med än – läggs till med ett tryck. */
   quickAdd?: ReusablePlayerProfile[];
+  /** Övriga spelare i appen (senast aktiva först). */
+  morePlayers?: ReusablePlayerProfile[];
   onRemovePlayer: (uid: string) => Promise<void>;
   onToggleCoursePublic: (isPublic: boolean) => Promise<void>;
   onSetCountsForHcp: (counts: boolean) => Promise<void>;
@@ -44,6 +46,7 @@ export const RoundManageSheet: React.FC<RoundManageSheetProps> = ({
   onToggleLock,
   onAddPlayer,
   quickAdd = [],
+  morePlayers = [],
   onRemovePlayer,
   onToggleCoursePublic,
   onSetCountsForHcp,
@@ -55,6 +58,7 @@ export const RoundManageSheet: React.FC<RoundManageSheetProps> = ({
   const [addMsg, setAddMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [confirm, setConfirm] = useState<'leave' | 'delete' | null>(null);
   const [copied, setCopied] = useState(false);
+  const [showMore, setShowMore] = useState(false);
   const deleted = round.status === 'deleted';
   const countsForHcp = me.countsForHcp !== false;
   const hasScore = me.sips.some((s) => s > 0);
@@ -129,24 +133,34 @@ export const RoundManageSheet: React.FC<RoundManageSheetProps> = ({
                 </li>
               ))}
             </ul>
-            {quickAdd.length > 0 && (
-              <div className="mt-3">
-                <div className="mb-1.5 text-[11px] font-semibold text-[#112218]/55">Lägg till vänner</div>
-                <div className="flex flex-wrap gap-1.5">
-                  {quickAdd.map((f) => (
-                    <button key={f.uid} type="button" disabled={!!busy}
-                      onClick={() => void run(`qa-${f.uid}`, async () => {
-                        const res = await onAddPlayer(f.playerCode || '');
-                        setAddMsg({ ok: res.ok, text: res.message });
-                      })}
-                      className="inline-flex items-center gap-1.5 rounded-full border border-[#166534]/30 bg-[#166534]/5 py-1 pl-1 pr-2.5 text-xs font-semibold text-[#112218] disabled:opacity-50">
-                      <GolferAvatar avatarSeed={f.avatarSeed} displayName={f.displayName} size="xs" />
-                      {busy === `qa-${f.uid}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <UserPlus className="h-3 w-3 text-[#166534]" />}
-                      {f.displayName.split(' ')[0]}
-                    </button>
-                  ))}
+            {[
+              { label: 'Lägg till vänner', list: quickAdd },
+              ...(morePlayers.length > 0 ? [{ label: 'Andra spelare', list: showMore ? morePlayers : morePlayers.slice(0, 6) }] : []),
+            ].map((group) =>
+              group.list.length === 0 ? null : (
+                <div key={group.label} className="mt-3">
+                  <div className="mb-1.5 text-[11px] font-semibold text-[#112218]/55">{group.label}</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {group.list.map((f) => (
+                      <button key={f.uid} type="button" disabled={!!busy || !f.playerCode}
+                        onClick={() => void run(`qa-${f.uid}`, async () => {
+                          const res = await onAddPlayer(f.playerCode || '');
+                          setAddMsg({ ok: res.ok, text: res.message });
+                        })}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-[#166534]/30 bg-[#166534]/5 py-1 pl-1 pr-2.5 text-xs font-semibold text-[#112218] disabled:opacity-50">
+                        <GolferAvatar avatarSeed={f.avatarSeed} displayName={f.displayName} size="xs" />
+                        {busy === `qa-${f.uid}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <UserPlus className="h-3 w-3 text-[#166534]" />}
+                        {f.displayName.split(' ')[0]}
+                      </button>
+                    ))}
+                    {group.label === 'Andra spelare' && !showMore && morePlayers.length > 6 && (
+                      <button type="button" onClick={() => setShowMore(true)} className="px-2 text-xs font-semibold text-[#166534]">
+                        +{morePlayers.length - 6} till
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
+              )
             )}
             <form className="mt-3 flex gap-2"
               onSubmit={(e) => {

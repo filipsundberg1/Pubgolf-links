@@ -441,6 +441,8 @@ interface PubRouteMapProps {
   onOpenEditHole?: (hole: PubHole) => void;
   onOpenBulkAddressModal?: () => void;
   compact?: boolean;
+  /** Total promenadsträcka och -tid för hela rundan (meter, millisekunder). */
+  onTotals?: (distanceMeters: number, durationMillis: number) => void;
 }
 
 export const PubRouteMap: React.FC<PubRouteMapProps> = ({
@@ -452,6 +454,7 @@ export const PubRouteMap: React.FC<PubRouteMapProps> = ({
   onOpenEditHole,
   onOpenBulkAddressModal,
   compact = false,
+  onTotals,
 }) => {
   const orderedHoles = useMemo(
     () => [...holes].sort((a, b) => a.holeNumber - b.holeNumber),
@@ -520,11 +523,11 @@ export const PubRouteMap: React.FC<PubRouteMapProps> = ({
             <span>GOOGLE MAPS · RUTTKARTA MELLAN PUBARNA</span>
             <span aria-hidden="true">·</span>
             <span>
-              {configuredHoles.length}/9 HÅL MED ADRESS I {course.city.toUpperCase()}
+              {configuredHoles.length}/{orderedHoles.length} HÅL MED ADRESS I {course.city.toUpperCase()}
             </span>
           </div>
           <h3 className="mt-1 font-display text-lg font-bold text-white sm:text-xl">
-            Promenadväg & Karta mellan Hål 1–9
+            Promenadväg & karta mellan hålen
           </h3>
         </div>
 
@@ -564,7 +567,7 @@ export const PubRouteMap: React.FC<PubRouteMapProps> = ({
               className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl bg-[#D4AF37] px-3.5 py-1.5 text-xs font-bold text-[#112218] transition-colors hover:bg-[#E5C158] cursor-pointer whitespace-nowrap"
             >
               <Edit3 className="h-3.5 w-3.5" />
-              Ange adresser (Hål 1–9)
+              Ange adresser
             </button>
           )}
         </div>
@@ -713,6 +716,7 @@ export const PubRouteMap: React.FC<PubRouteMapProps> = ({
               setComputedLegs(legs);
               setTotalDistanceMeters(dist);
               setTotalDurationMillis(dur);
+              if (routeMode === 'full' && !computing && !err && dist > 0) onTotals?.(dist, dur);
               setIsComputingRoute(computing);
               setRouteError(err);
             }}

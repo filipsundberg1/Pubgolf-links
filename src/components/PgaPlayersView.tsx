@@ -333,7 +333,7 @@ export const PgaPlayersView: React.FC<PgaPlayersViewProps> = ({
                       <div className="flex items-center gap-1.5 text-[11px] text-[#112218]/65">
                         <Calendar className="h-3 w-3" />
                         <span>
-                          {item.city} · {item.eventDate} · {item.thruHoles}/9 hål spelade
+                          {item.city} · {item.eventDate} · {item.thruHoles} hål spelade
                         </span>
                       </div>
                     </div>

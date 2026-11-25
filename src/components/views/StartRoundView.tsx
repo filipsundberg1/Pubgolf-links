@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Flag, Globe2, Loader2, Lock, Play } from 'lucide-react';
+import { ArrowDownUp, ArrowLeft, Flag, Globe2, Loader2, Lock, Play } from 'lucide-react';
 import {
   DRINK_CATALOG,
   GAME_MODE_LABELS,
+  isPlaceholderText,
   type PubCourse,
   type PubGolfGameMode,
   type PubHole,
@@ -11,6 +12,8 @@ import {
 export interface StartRoundInput {
   eventDate: string;
   gameMode: PubGolfGameMode;
+  /** Spela banan baklänges (sista hålet först). Gäller bara den här rundan. */
+  reverse: boolean;
 }
 
 interface StartRoundViewProps {
@@ -31,12 +34,14 @@ const inputClass =
   'w-full rounded-xl border border-[#112218]/15 bg-white px-3 py-2.5 text-sm text-[#112218] outline-none focus:border-[#166534] focus:ring-2 focus:ring-[#166534]/20';
 const labelClass = 'mb-1 block text-xs font-semibold text-[#112218]/70';
 
-const looksUnset = (text: string) => /^Hål \d$|Ange |Välj dryck/.test(text);
+const looksUnset = isPlaceholderText;
 
 /** Starta en runda på en bana: du blir ägare och får en privat kod att dela. */
 export const StartRoundView: React.FC<StartRoundViewProps> = ({ course, holes, isCourseOwner, onBack, onStart }) => {
   const [eventDate, setEventDate] = useState(todayIso());
   const [gameMode, setGameMode] = useState<PubGolfGameMode>('single');
+  const [reverse, setReverse] = useState(false);
+  const shown = reverse ? [...holes].reverse() : holes;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const totalPar = holes.reduce((s, h) => s + h.par, 0);
@@ -45,7 +50,7 @@ export const StartRoundView: React.FC<StartRoundViewProps> = ({ course, holes, i
     setBusy(true);
     setError(null);
     try {
-      await onStart({ eventDate, gameMode });
+      await onStart({ eventDate, gameMode, reverse });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Kunde inte starta rundan. Försök igen.');
       setBusy(false);
@@ -62,21 +67,28 @@ export const StartRoundView: React.FC<StartRoundViewProps> = ({ course, holes, i
         <h1 className="mt-1 font-display text-3xl font-bold text-[#112218]">{course.title}</h1>
         <p className="mt-1 flex items-center gap-1.5 text-sm text-[#112218]/65">
           {course.isPublic ? <Globe2 className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
-          {course.city} · 9 hål · par {totalPar} · {isCourseOwner ? 'din bana' : `bana av ${course.ownerName}`}
+          {course.city} · {holes.length} hål · par {totalPar} · {isCourseOwner ? 'din bana' : `bana av ${course.ownerName}`}
         </p>
       </div>
 
       <section className="rounded-3xl border border-[#112218]/10 bg-white p-4 shadow-xs">
-        <h2 className="mb-2 text-xs font-semibold uppercase tracking-[0.15em] text-[#112218]/55">Banguide</h2>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <h2 className="text-xs font-semibold uppercase tracking-[0.15em] text-[#112218]/55">Banguide</h2>
+          <button type="button" onClick={() => setReverse((v) => !v)} disabled={holes.length < 2}
+            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition ${reverse ? 'bg-[#112218] text-[#D4AF37]' : 'border border-[#112218]/15 text-[#112218]'}`}>
+            <ArrowDownUp className="h-3.5 w-3.5" /> {reverse ? 'Baklänges' : 'Kör baklänges'}
+          </button>
+        </div>
+        {reverse && <p className="mb-1 text-xs text-[#112218]/60">Rundan börjar på sista hålet. Banan i sig ändras inte.</p>}
         <ol className="divide-y divide-[#112218]/5">
-          {holes.map((h) => (
+          {shown.map((h, idx) => (
             <li key={h.holeNumber} className="flex items-center gap-3 py-2">
               <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#112218] font-mono text-xs font-bold text-[#D4AF37]">
-                {h.holeNumber}
+                {idx + 1}
               </span>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-semibold text-[#112218]">
-                  {looksUnset(h.pubName) ? `Hål ${h.holeNumber}` : h.pubName}
+                  {looksUnset(h.pubName) ? `Hål ${idx + 1}` : h.pubName}
                 </div>
                 <div className="truncate text-xs text-[#112218]/55">
                   {looksUnset(h.drinkName) ? DRINK_CATALOG[h.drinkType]?.label || h.drinkType : h.drinkName} · {h.volumeCl} cl

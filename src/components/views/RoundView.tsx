@@ -1,16 +1,20 @@
-import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowLeft,
+  BookOpen,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Flag,
+  Loader2,
+  LogOut,
   Map as MapIcon,
   Minus,
-  Pencil,
   Plus,
   RotateCcw,
   Settings2,
   Share2,
   ShieldAlert,
+  SlidersHorizontal,
   Trophy,
   Wine,
 } from 'lucide-react';
@@ -21,19 +25,22 @@ import {
   calculateRoundSummary,
   evaluateGolfHoleScore,
   formatEventDate,
+  isPlaceholderText as isPlaceholder,
   type PlayerTourProfile,
   type PubCourse,
   type PubGolfGameMode,
   type PubHole,
+  type RoundStatus,
 } from '../../utils/golfRules';
 import { GolfScoreSymbol } from '../GolfScoreSymbol';
 import { GolferAvatar } from '../GolferAvatar';
 import { Sheet } from '../shell/Sheet';
+import { RulesList } from '../RulesList';
+import { HoleListEditor, holeToDraft, type HoleDraft } from '../HoleListEditor';
 
 // Tunga delar laddas först när de öppnas
 const LeaderboardView = lazy(() => import('../LeaderboardView').then((m) => ({ default: m.LeaderboardView })));
 const PubRouteMap = lazy(() => import('../PubRouteMap').then((m) => ({ default: m.PubRouteMap })));
-const CourseGuideView = lazy(() => import('../CourseGuideView').then((m) => ({ default: m.CourseGuideView })));
 
 const SheetFallback = () => <p className="py-8 text-center text-sm text-[#112218]/60">Laddar…</p>;
 
@@ -45,26 +52,26 @@ interface RoundViewProps {
   holes: PubHole[];
   me: PlayerTourProfile;
   players: PlayerTourProfile[];
-  /** Ägare av rundan (spelform, lag). */
+  /** Ägare av rundan (spelform, lag, lokala ändringar). */
   isOwner: boolean;
-  /** Ägare av banan (redigera hål). */
-  isCourseOwner: boolean;
-  /** Ägaren har raderat rundan – bara visning. */
-  readOnly: boolean;
+  status: RoundStatus;
   locked: boolean;
+  /** Rundan har egna hål (ändrad ordning eller lokala ändringar). */
+  hasCustomHoles: boolean;
   manageSheet: React.ReactNode;
   selectedHoleNum: number;
   onSelectHole: (n: number) => void;
-  onBack: () => void;
+  onMinimize: () => void;
   onUpdateHoleSips: (holeNumber: number, sips: number) => void;
-  onSaveHoleConfig: (hole: PubHole) => Promise<void>;
   onSaveCourseMeta: (course: PubCourse) => Promise<void>;
+  /** Spara hålen bara för den här rundan. null = tillbaka till banans original. */
+  onSaveRoundHoles: (holes: HoleDraft[] | null) => Promise<void>;
   onAssignTeam: (uids: string[], teamId: string, teamName: string) => Promise<void>;
   onInspectPlayer: (uid: string) => void;
+  onFinish: () => Promise<void>;
+  onReopen: () => Promise<void>;
+  onLeave: () => Promise<void>;
 }
-
-const isPlaceholder = (text: string) =>
-  /Ange |Välj dryck i banguiden|Lokalt pubhinder|Klicka på Anpassa/.test(text);
 
 export const RoundView: React.FC<RoundViewProps> = ({
   course,
@@ -73,21 +80,29 @@ export const RoundView: React.FC<RoundViewProps> = ({
   me,
   players,
   isOwner,
-  isCourseOwner,
-  readOnly,
+  status,
   locked,
+  hasCustomHoles,
   manageSheet,
   selectedHoleNum,
   onSelectHole,
-  onBack,
+  onMinimize,
   onUpdateHoleSips,
-  onSaveHoleConfig,
   onSaveCourseMeta,
+  onSaveRoundHoles,
   onAssignTeam,
   onInspectPlayer,
+  onFinish,
+  onReopen,
+  onLeave,
 }) => {
-  const [sheet, setSheet] = useState<'leaderboard' | 'map' | 'edit' | 'manage' | null>(null);
+  const [sheet, setSheet] = useState<'leaderboard' | 'map' | 'rules' | 'customize' | 'manage' | 'finish' | 'leave' | null>(null);
   const [shareNote, setShareNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [drafts, setDrafts] = useState<HoleDraft[]>([]);
+  const [customizeError, setCustomizeError] = useState<string | null>(null);
+  const readOnly = status === 'deleted';
+  const finished = status === 'finished';
 
   const hole = holes.find((h) => h.holeNumber === selectedHoleNum) || holes[0];
   const savedSips = hole ? me.sips[hole.holeNumber - 1] || 0 : 0;
@@ -101,6 +116,24 @@ export const RoundView: React.FC<RoundViewProps> = ({
   const summary = useMemo(() => calculateRoundSummary(me.sips, holes), [me.sips, holes]);
   const board = useMemo(() => buildLeaderboard(players, holes), [players, holes]);
   const myRank = board.find((e) => e.player.uid === me.uid);
+  const anyScores = players.some((p) => p.sips.some((s) => s > 0));
+
+  // Dra ner handtaget för att fälla ihop rundan
+  const dragStart = useRef<number | null>(null);
+  const [dragY, setDragY] = useState(0);
+  const onTouchStart = (e: React.TouchEvent) => {
+    dragStart.current = e.touches[0].clientY;
+  };
+  const onTouchMove = (e: React.TouchEvent) => {
+    if (dragStart.current === null) return;
+    setDragY(Math.max(0, Math.min(220, e.touches[0].clientY - dragStart.current)));
+  };
+  const onTouchEnd = () => {
+    const pulled = dragY;
+    dragStart.current = null;
+    setDragY(0);
+    if (pulled > 70) onMinimize();
+  };
 
   if (!hole) {
     return <p className="text-sm text-[#112218]/60">Banan laddas…</p>;
@@ -110,6 +143,7 @@ export const RoundView: React.FC<RoundViewProps> = ({
   const drinkLabel = DRINK_CATALOG[hole.drinkType]?.label || hole.drinkType;
   const hasRule = !isPlaceholder(hole.hazardTitle) || !isPlaceholder(hole.hazardRule);
   const isDirty = draftSips !== savedSips;
+  const isLast = hole.holeNumber >= holes.length;
 
   const share = async () => {
     const url = `${window.location.origin}/?join=${encodeURIComponent(course.inviteCode)}`;
@@ -127,24 +161,54 @@ export const RoundView: React.FC<RoundViewProps> = ({
     setTimeout(() => setShareNote(null), 2500);
   };
 
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true);
+    try {
+      await fn();
+      setSheet(null);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openCustomize = () => {
+    setDrafts(holes.map(holeToDraft));
+    setCustomizeError(null);
+    setSheet('customize');
+  };
+
   return (
-    <div className="space-y-4 pb-10">
+    <div className="space-y-4 pb-10 transition-transform" style={dragY ? { transform: `translateY(${dragY}px)`, transition: 'none' } : undefined}>
+      {/* Handtag: dra ner (eller tryck) för att fälla ihop rundan och använda resten av appen */}
+      <div
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        onTouchCancel={onTouchEnd}
+        className="-mx-4 -mt-5 touch-none select-none px-4 pb-1 pt-2"
+      >
+        <button type="button" onClick={onMinimize} className="mx-auto flex flex-col items-center gap-1 px-6 py-1 text-[11px] font-semibold text-[#112218]/50">
+          <span className="h-1.5 w-10 rounded-full bg-[#112218]/25" />
+          <span className="inline-flex items-center gap-1"><ChevronDown className="h-3.5 w-3.5" /> Dra ner för att fälla ihop</span>
+        </button>
+      </div>
+
       {/* Rundhuvud */}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <button type="button" onClick={onBack} className="mb-1 inline-flex items-center gap-1 text-sm font-semibold text-[#166534]">
-            <ArrowLeft className="h-4 w-4" /> Rundor
-          </button>
           <h1 className="truncate font-display text-2xl font-bold text-[#112218]">{course.title}</h1>
           <p className="text-xs text-[#112218]/60">
             {formatEventDate(course.eventDate)} · {course.city} · {GAME_MODE_LABELS[course.gameMode || 'single'].title} · {players.length} spelare
+            {hasCustomHoles && ' · egen ordning'}
           </p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
-          <button type="button" onClick={share}
-            className="inline-flex items-center gap-1.5 rounded-full bg-[#112218] px-3 py-1.5 text-xs font-semibold text-[#F6F4EE]">
-            <Share2 className="h-3.5 w-3.5 text-[#D4AF37]" /> Bjud in
-          </button>
+          {!finished && !readOnly && (
+            <button type="button" onClick={share}
+              className="inline-flex items-center gap-1.5 rounded-full bg-[#112218] px-3 py-1.5 text-xs font-semibold text-[#F6F4EE]">
+              <Share2 className="h-3.5 w-3.5 text-[#D4AF37]" /> Bjud in
+            </button>
+          )}
           <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#112218]/60">
             {locked ? 'Låst · ' : ''}Kod <span className="font-mono tracking-wider text-[#112218]">{course.inviteCode}</span>
           </span>
@@ -157,8 +221,19 @@ export const RoundView: React.FC<RoundViewProps> = ({
           Ägaren har raderat rundan. Du kan se resultatet men inte ändra det.
         </div>
       )}
+      {finished && (
+        <div className="flex items-center justify-between gap-3 rounded-2xl border border-[#D4AF37]/50 bg-[#D4AF37]/10 px-4 py-3 text-sm text-[#112218]">
+          <span><Flag className="mr-1 inline h-4 w-4 text-[#166534]" /> Rundan är avslutad. Du kan fortfarande rätta din score.</span>
+          {isOwner && (
+            <button type="button" disabled={busy} onClick={() => void run(onReopen)}
+              className="shrink-0 rounded-full bg-[#112218] px-3 py-1.5 text-xs font-semibold text-[#F6F4EE] disabled:opacity-60">
+              Öppna igen
+            </button>
+          )}
+        </div>
+      )}
 
-      {/* Hålväljare */}
+      {/* Hålväljare – tryck på ett spelat hål för att ändra scoren */}
       <div className="-mx-4 overflow-x-auto px-4">
         <div className="flex gap-2">
           {holes.map((h) => {
@@ -224,7 +299,11 @@ export const RoundView: React.FC<RoundViewProps> = ({
               className="inline-flex items-center gap-1 rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold disabled:opacity-30">
               <ChevronLeft className="h-4 w-4" /> Förra
             </button>
-            <button type="button" disabled={hole.holeNumber >= holes.length} onClick={() => onSelectHole(hole.holeNumber + 1)}
+            <button type="button" onClick={() => setSheet('rules')}
+              className="inline-flex items-center gap-1 rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold">
+              <BookOpen className="h-3.5 w-3.5 text-[#D4AF37]" /> Alla regler
+            </button>
+            <button type="button" disabled={isLast} onClick={() => onSelectHole(hole.holeNumber + 1)}
               className="inline-flex items-center gap-1 rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold disabled:opacity-30">
               Nästa <ChevronRight className="h-4 w-4" />
             </button>
@@ -232,14 +311,14 @@ export const RoundView: React.FC<RoundViewProps> = ({
         </div>
       </section>
 
-      {/* Min score */}
+      {/* Min score – går alltid att ändra i efterhand */}
       <section className={`rounded-3xl border border-[#112218]/10 bg-white p-5 shadow-xs ${readOnly ? 'pointer-events-none opacity-60' : ''}`}>
         <div className="flex items-center gap-3">
           <GolferAvatar avatarSeed={me.avatarSeed} wins={me.wins} displayName={me.displayName} size="sm" />
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-semibold text-[#112218]">Din score på hål {hole.holeNumber}</div>
             <div className="text-xs text-[#112218]/60">
-              {savedSips > 0 ? `Registrerat: ${savedSips} klunkar` : 'Inte registrerat än'}
+              {savedSips > 0 ? `Registrerat: ${savedSips} klunkar – ändra med − / + och spara` : 'Inte registrerat än'}
             </div>
           </div>
         </div>
@@ -269,18 +348,22 @@ export const RoundView: React.FC<RoundViewProps> = ({
               <RotateCcw className="h-4 w-4" />
             </button>
           )}
-          <button type="button" disabled={!isDirty}
-            onClick={() => {
-              onUpdateHoleSips(hole.holeNumber, draftSips);
-              // Första registreringen: hoppa vidare till nästa hål när firandet visats
-              if (savedSips === 0 && hole.holeNumber < holes.length) {
-                const next = hole.holeNumber + 1;
-                setTimeout(() => onSelectHole(next), 2500);
-              }
-            }}
-            className="flex-1 rounded-2xl bg-[#112218] py-3.5 text-sm font-bold text-[#F6F4EE] shadow disabled:opacity-40">
-            {savedSips > 0 ? 'Uppdatera score' : 'Registrera score'}
-          </button>
+          {isDirty || savedSips === 0 ? (
+            <button type="button" onClick={() => onUpdateHoleSips(hole.holeNumber, draftSips)}
+              className="flex-1 rounded-2xl bg-[#112218] py-3.5 text-sm font-bold text-[#F6F4EE] shadow">
+              {savedSips > 0 ? 'Spara ändrad score' : 'Registrera score'}
+            </button>
+          ) : !isLast ? (
+            <button type="button" onClick={() => onSelectHole(hole.holeNumber + 1)}
+              className="flex flex-1 items-center justify-center gap-1 rounded-2xl bg-[#166534] py-3.5 text-sm font-bold text-white shadow">
+              Nästa hål <ChevronRight className="h-4 w-4" />
+            </button>
+          ) : (
+            <button type="button" onClick={() => setSheet('finish')} disabled={finished}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-2xl bg-[#166534] py-3.5 text-sm font-bold text-white shadow disabled:opacity-50">
+              <Flag className="h-4 w-4" /> {finished ? 'Registrerat' : 'Sista hålet klart – avsluta'}
+            </button>
+          )}
         </div>
 
         <div className="mt-4 grid grid-cols-3 divide-x divide-[#112218]/10 rounded-2xl bg-[#F6F4EE] py-3 text-center">
@@ -317,7 +400,7 @@ export const RoundView: React.FC<RoundViewProps> = ({
             </li>
           ))}
         </ol>
-        <div className={`mt-3 grid gap-2 ${isCourseOwner ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'}`}>
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
           <button type="button" onClick={() => setSheet('leaderboard')}
             className="flex items-center justify-center gap-1.5 rounded-2xl bg-[#112218] py-3 text-xs font-bold text-[#F6F4EE]">
             <Trophy className="h-4 w-4 text-[#D4AF37]" /> {course.gameMode === 'brutal' ? 'Tabell & lag' : 'Hela tabellen'}
@@ -326,20 +409,133 @@ export const RoundView: React.FC<RoundViewProps> = ({
             className="flex items-center justify-center gap-1.5 rounded-2xl border border-[#112218]/15 py-3 text-xs font-bold text-[#112218]">
             <MapIcon className="h-4 w-4 text-[#166534]" /> Karta
           </button>
+          <button type="button" onClick={() => setSheet('rules')}
+            className="flex items-center justify-center gap-1.5 rounded-2xl border border-[#112218]/15 py-3 text-xs font-bold text-[#112218]">
+            <BookOpen className="h-4 w-4 text-[#166534]" /> Regler
+          </button>
           <button type="button" onClick={() => setSheet('manage')}
             className="flex items-center justify-center gap-1.5 rounded-2xl border border-[#112218]/15 py-3 text-xs font-bold text-[#112218]">
-            <Settings2 className="h-4 w-4 text-[#166534]" /> Rundan
+            <Settings2 className="h-4 w-4 text-[#166534]" /> Spelare & inställningar
           </button>
-          {isCourseOwner && (
-            <button type="button" onClick={() => setSheet('edit')}
-              className="flex items-center justify-center gap-1.5 rounded-2xl border border-[#112218]/15 py-3 text-xs font-bold text-[#112218]">
-              <Pencil className="h-4 w-4 text-[#166534]" /> Redigera bana
+          {isOwner && !readOnly && (
+            <button type="button" onClick={openCustomize}
+              className="col-span-2 flex items-center justify-center gap-1.5 rounded-2xl border border-[#112218]/15 py-3 text-xs font-bold text-[#112218] sm:col-span-4">
+              <SlidersHorizontal className="h-4 w-4 text-[#166534]" /> Anpassa hålen för rundan
             </button>
           )}
         </div>
       </section>
 
-      <Sheet open={sheet === 'manage'} title="Rundan" onClose={() => setSheet(null)}>
+      {/* Avsluta / lämna */}
+      {!readOnly && (
+        <div className="grid grid-cols-2 gap-2">
+          {!finished && (
+            <button type="button" onClick={() => setSheet('finish')}
+              className="flex items-center justify-center gap-2 rounded-2xl bg-[#166534] py-3.5 text-sm font-bold text-white shadow">
+              <Flag className="h-4 w-4" /> {isOwner ? 'Avsluta rundan' : 'Jag är klar'}
+            </button>
+          )}
+          <button type="button" onClick={() => setSheet('leave')}
+            className={`flex items-center justify-center gap-2 rounded-2xl border border-red-200 bg-white py-3.5 text-sm font-semibold text-red-700 ${finished ? 'col-span-2' : ''}`}>
+            <LogOut className="h-4 w-4" /> Lämna rundan
+          </button>
+        </div>
+      )}
+
+      <Sheet open={sheet === 'finish'} title={isOwner ? 'Avsluta rundan' : 'Klar med rundan?'} onClose={() => setSheet(null)}>
+        <div className="space-y-3">
+          <div className="rounded-2xl bg-[#112218] p-4 text-[#F6F4EE]">
+            <div className="text-xs font-semibold uppercase tracking-[0.15em] text-[#D4AF37]">Ditt resultat</div>
+            <div className="mt-1 flex items-baseline gap-3">
+              <span className="font-mono text-4xl font-black">{summary.toParFormatted}</span>
+              <span className="text-sm text-[#F6F4EE]/70">{summary.totalSips} klunkar · {summary.thruHoles}/{holes.length} hål · {myRank?.positionLabel || '–'}</span>
+            </div>
+          </div>
+          {summary.thruHoles < holes.length && (
+            <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              Du har {holes.length - summary.thruHoles} hål kvar. Bara hela rundor räknas till HCP och vinst.
+            </p>
+          )}
+          <p className="text-sm text-[#112218]/70">
+            {isOwner
+              ? 'Rundan avslutas för alla och låses. Alla kan fortfarande rätta sin score i efterhand, och du kan öppna rundan igen.'
+              : 'Rundan stängs för dig och ditt resultat sparas. De andra kan spela vidare.'}
+          </p>
+          <button type="button" disabled={busy} onClick={() => void run(onFinish)}
+            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#166534] py-3.5 text-sm font-bold text-white disabled:opacity-60">
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Flag className="h-4 w-4" />}
+            {isOwner ? 'Avsluta för alla' : 'Ja, jag är klar'}
+          </button>
+          <button type="button" onClick={() => setSheet(null)} className="w-full rounded-2xl border border-[#112218]/15 py-3 text-sm font-semibold">
+            Fortsätt spela
+          </button>
+        </div>
+      </Sheet>
+
+      <Sheet open={sheet === 'leave'} title="Lämna rundan?" onClose={() => setSheet(null)}>
+        <div className="space-y-3">
+          <p className="text-sm text-[#112218]/75">
+            Du tas bort från rundan och <strong>ditt resultat raderas</strong>.
+            {isOwner && players.length > 1 && ' De andra kan spela vidare utan dig. Vill du stoppa rundan för alla, använd "Radera för alla" under Spelare & inställningar.'}
+          </p>
+          <p className="text-xs text-[#112218]/55">Vill du bara tillbaka till resten av appen? Fäll ner rundan i stället – den ligger kvar längst ner.</p>
+          <button type="button" disabled={busy} onClick={() => void run(onLeave)}
+            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-red-700 py-3.5 text-sm font-bold text-white disabled:opacity-60">
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />} Lämna och radera mitt resultat
+          </button>
+          <button type="button" onClick={() => { setSheet(null); onMinimize(); }} className="w-full rounded-2xl border border-[#112218]/15 py-3 text-sm font-semibold">
+            Fäll ner i stället
+          </button>
+        </div>
+      </Sheet>
+
+      <Sheet open={sheet === 'rules'} title="Regler" onClose={() => setSheet(null)}>
+        <RulesList holes={holes} />
+      </Sheet>
+
+      <Sheet open={sheet === 'customize'} title="Anpassa hålen för rundan" onClose={() => setSheet(null)}>
+        <div className="space-y-4">
+          <p className="rounded-2xl bg-[#F6F4EE] px-3 py-2.5 text-xs text-[#112218]/70">
+            Ändringarna gäller bara den här rundan. Banan {courseDoc ? `"${courseDoc.title}"` : ''} är oförändrad och nästa runda börjar från originalet.
+          </p>
+          {anyScores && (
+            <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              Någon har redan registrerat score. Score sitter på hålnumret, så byter ni plats på spelade hål följer scoren inte med.
+            </p>
+          )}
+          {sheet === 'customize' && <HoleListEditor holes={drafts} onChange={setDrafts} city={course.city} initialOpen={-1} />}
+          {customizeError && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{customizeError}</p>}
+          <div className="grid gap-2">
+            <button type="button" disabled={busy}
+              onClick={async () => {
+                setCustomizeError(null);
+                try {
+                  await run(() => onSaveRoundHoles(drafts));
+                } catch {
+                  setCustomizeError('Kunde inte spara. Försök igen.');
+                }
+              }}
+              className="flex items-center justify-center gap-2 rounded-2xl bg-[#112218] py-3.5 text-sm font-bold text-[#F6F4EE] disabled:opacity-60">
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />} Spara för den här rundan
+            </button>
+            {hasCustomHoles && (
+              <button type="button" disabled={busy}
+                onClick={async () => {
+                  try {
+                    await run(() => onSaveRoundHoles(null));
+                  } catch {
+                    setCustomizeError('Kunde inte återställa. Försök igen.');
+                  }
+                }}
+                className="rounded-2xl border border-[#112218]/15 py-3 text-sm font-semibold text-[#112218] disabled:opacity-60">
+                Återställ till banans original
+              </button>
+            )}
+          </div>
+        </div>
+      </Sheet>
+
+      <Sheet open={sheet === 'manage'} title="Spelare & inställningar" onClose={() => setSheet(null)}>
         {manageSheet}
       </Sheet>
 
@@ -369,31 +565,10 @@ export const RoundView: React.FC<RoundViewProps> = ({
           holes={holes}
           selectedHoleNum={hole.holeNumber}
           onSelectHole={onSelectHole}
-          isCourseOwner={isCourseOwner}
           compact
         />}
         </Suspense>
       </Sheet>
-
-      {isCourseOwner && courseDoc && (
-        <Sheet open={sheet === 'edit'} title="Redigera banan" onClose={() => setSheet(null)}>
-          <Suspense fallback={<SheetFallback />}>
-          {sheet === 'edit' && <CourseGuideView
-            course={courseDoc}
-            holes={holes}
-            activePlayer={me}
-            selectedHoleNum={hole.holeNumber}
-            onSelectHole={onSelectHole}
-            onSaveHoleConfig={onSaveHoleConfig}
-            onSaveCourseMeta={onSaveCourseMeta}
-            onGoToScorecardHole={(n) => {
-              onSelectHole(n);
-              setSheet(null);
-            }}
-          />}
-          </Suspense>
-        </Sheet>
-      )}
     </div>
   );
 };

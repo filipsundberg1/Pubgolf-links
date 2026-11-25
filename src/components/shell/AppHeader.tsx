@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Info, LogOut, ShieldCheck, UserPlus, UserRound, Users } from 'lucide-react';
+import { ChevronDown, Compass, Info, LogOut, Map as MapIcon, ShieldCheck, UserPlus, UserRound } from 'lucide-react';
 import { GolferAvatar } from '../GolferAvatar';
 
 interface AppHeaderProps {
@@ -13,6 +13,7 @@ interface AppHeaderProps {
   onOpenAdmin: () => void;
   onGoHome: () => void;
   onOpenMyProfile: () => void;
+  onOpenMyCourses: () => void;
   onOpenPlayers: () => void;
   onOpenAbout: () => void;
   onSignOut: () => void;
@@ -30,6 +31,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   onOpenAdmin,
   onGoHome,
   onOpenMyProfile,
+  onOpenMyCourses,
   onOpenPlayers,
   onOpenAbout,
   onSignOut,
@@ -73,6 +75,11 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
           Pubgolf Links
         </button>
 
+        <div className="flex items-center gap-2">
+        <button type="button" onClick={onOpenPlayers}
+          className="inline-flex items-center gap-1.5 rounded-full border border-[#112218]/15 bg-white px-3 py-1.5 text-xs font-semibold text-[#112218] shadow-xs hover:bg-[#112218]/5">
+          <Compass className="h-4 w-4 text-[#166534]" /> <span className="hidden min-[380px]:inline">Utforska</span>
+        </button>
         <div className="relative" ref={menuRef}>
           <button
             type="button"
@@ -108,6 +115,9 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
               <button type="button" role="menuitem" className={itemClass} onClick={pick(onOpenMyProfile)}>
                 <UserRound className="h-4 w-4 text-[#166534]" /> Min profil
               </button>
+              <button type="button" role="menuitem" className={itemClass} onClick={pick(onOpenMyCourses)}>
+                <MapIcon className="h-4 w-4 text-[#166534]" /> Mina banor
+              </button>
               <button type="button" role="menuitem" className={itemClass} onClick={pick(onOpenFriends)}>
                 <UserPlus className="h-4 w-4 text-[#166534]" /> Vänner
                 {friendRequests > 0 && (
@@ -115,7 +125,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
                 )}
               </button>
               <button type="button" role="menuitem" className={itemClass} onClick={pick(onOpenPlayers)}>
-                <Users className="h-4 w-4 text-[#166534]" /> Andras profiler
+                <Compass className="h-4 w-4 text-[#166534]" /> Utforska
               </button>
               <button type="button" role="menuitem" className={itemClass} onClick={pick(onOpenAbout)}>
                 <Info className="h-4 w-4 text-[#166534]" /> Om sidan
@@ -131,6 +141,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
               </button>
             </div>
           )}
+        </div>
         </div>
       </div>
     </header>

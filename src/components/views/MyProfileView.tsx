@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, Check, ChevronRight, Loader2, Pencil, Shirt } from 'lucide-react';
-import type { PlayerCareerStats, PlayerRoundHistoryItem } from '../../utils/golfRules';
+import { ArrowLeft, Check, ChevronRight, Eye, Globe2, Loader2, Lock, Pencil, Play, PlusCircle, Shirt } from 'lucide-react';
+import type { PlayerCareerStats, PlayerRoundHistoryItem, PubCourse } from '../../utils/golfRules';
 import { formatEventDate } from '../../utils/golfRules';
 import { AvatarCustomizer, GolferAvatar } from '../GolferAvatar';
 
@@ -30,6 +30,13 @@ interface MyProfileViewProps {
   onBack: () => void;
   onSave: (fields: ProfileFields) => Promise<void>;
   onOpenRound: (courseId: string) => void;
+  myCourses: PubCourse[];
+  holeCountFor: (course: PubCourse) => number;
+  initialTab?: 'rounds' | 'courses';
+  onOpenCourse: (courseId: string) => void;
+  onEditCourse: (courseId: string) => void;
+  onStartCourse: (courseId: string) => void;
+  onCreateCourse: () => void;
 }
 
 const inputClass =
@@ -51,8 +58,24 @@ export function withProfileDefaults(f: ProfileFields): ProfileFields {
   };
 }
 
-export const MyProfileView: React.FC<MyProfileViewProps> = ({ profile, playerCode, stats, history, onBack, onSave, onOpenRound }) => {
+export const MyProfileView: React.FC<MyProfileViewProps> = ({
+  profile,
+  playerCode,
+  stats,
+  history,
+  onBack,
+  onSave,
+  onOpenRound,
+  myCourses,
+  holeCountFor,
+  initialTab = 'rounds',
+  onOpenCourse,
+  onEditCourse,
+  onStartCourse,
+  onCreateCourse,
+}) => {
   const [draft, setDraft] = useState<ProfileFields>(profile);
+  const [tab, setTab] = useState<'rounds' | 'courses'>(initialTab);
   const [editing, setEditing] = useState<'avatar' | 'info' | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -85,7 +108,9 @@ export const MyProfileView: React.FC<MyProfileViewProps> = ({ profile, playerCod
       {/* Spelarkort */}
       <section className="overflow-hidden rounded-3xl bg-[#112218] text-[#F6F4EE] shadow-xl">
         <div className="flex items-center gap-4 p-5">
-          <GolferAvatar avatarSeed={draft.avatarSeed} displayName={draft.displayName} size="lg" wins={stats?.wins || 0} />
+          {editing !== 'avatar' && (
+            <GolferAvatar avatarSeed={draft.avatarSeed} displayName={draft.displayName} size="lg" wins={stats?.wins || 0} />
+          )}
           <div className="min-w-0 flex-1">
             <div className="text-xs font-semibold uppercase tracking-[0.2em] text-[#D4AF37]">Pubgolf Tour</div>
             <h1 className="truncate font-display text-2xl font-bold">{profile.displayName}</h1>
@@ -146,7 +171,7 @@ export const MyProfileView: React.FC<MyProfileViewProps> = ({ profile, playerCod
             <div><label className={labelClass}>Stad</label><input className={inputClass} maxLength={50} value={draft.country} onChange={set('country')} /></div>
           </div>
           <div><label className={labelClass}>Om mig</label><textarea className={`${inputClass} min-h-[80px]`} maxLength={320} value={draft.bio} onChange={set('bio')} /></div>
-          <p className="text-xs text-[#112218]/55">Alla börjar på HCP 54. Det räknas sedan ut från dina bästa hela rundor (alla 9 hål), omräknat till 18 hål.</p>
+          <p className="text-xs text-[#112218]/55">Alla börjar på HCP 54. Det räknas sedan ut från dina bästa hela rundor (alla hål spelade), omräknat till 18 hål.</p>
         </section>
       )}
 
@@ -161,11 +186,63 @@ export const MyProfileView: React.FC<MyProfileViewProps> = ({ profile, playerCod
         <p className="rounded-2xl bg-white px-4 py-3 text-sm text-[#112218]/75 shadow-xs">{profile.bio}</p>
       )}
 
+      <div className="flex gap-1 rounded-2xl bg-[#112218]/5 p-1">
+        {([
+          ['rounds', `Rundor (${history.length})`],
+          ['courses', `Mina banor (${myCourses.length})`],
+        ] as ['rounds' | 'courses', string][]).map(([id, label]) => (
+          <button key={id} type="button" onClick={() => setTab(id)}
+            className={`flex-1 rounded-xl py-2 text-sm font-semibold transition ${tab === id ? 'bg-white text-[#112218] shadow-xs' : 'text-[#112218]/60'}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'courses' && (
+        <section className="space-y-2">
+          {myCourses.length === 0 && (
+            <p className="rounded-2xl border border-dashed border-[#112218]/20 px-4 py-5 text-center text-sm text-[#112218]/55">
+              Du har inte skapat någon bana än.
+            </p>
+          )}
+          {myCourses.map((c) => (
+            <div key={c.courseId} className="rounded-2xl border border-[#112218]/10 bg-white shadow-xs">
+              <button type="button" onClick={() => onOpenCourse(c.courseId)} className="flex w-full items-center gap-3 px-4 pt-3 text-left">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#F6F4EE] text-[#166534]">
+                  {c.isPublic ? <Globe2 className="h-5 w-5" /> : <Lock className="h-4 w-4" />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-semibold text-[#112218]">{c.title}</div>
+                  <div className="truncate text-xs text-[#112218]/60">
+                    {c.city} · {holeCountFor(c)} hål · {c.isPublic ? 'öppen för alla' : 'privat'}
+                  </div>
+                </div>
+              </button>
+              <div className="grid grid-cols-3 gap-1.5 p-3">
+                <button type="button" onClick={() => onOpenCourse(c.courseId)}
+                  className="flex items-center justify-center gap-1 rounded-xl bg-[#F6F4EE] py-2 text-xs font-semibold text-[#112218]">
+                  <Eye className="h-3.5 w-3.5" /> Banguide
+                </button>
+                <button type="button" onClick={() => onEditCourse(c.courseId)}
+                  className="flex items-center justify-center gap-1 rounded-xl bg-[#F6F4EE] py-2 text-xs font-semibold text-[#112218]">
+                  <Pencil className="h-3.5 w-3.5" /> Redigera
+                </button>
+                <button type="button" onClick={() => onStartCourse(c.courseId)}
+                  className="flex items-center justify-center gap-1 rounded-xl bg-[#166534] py-2 text-xs font-bold text-white">
+                  <Play className="h-3.5 w-3.5" /> Spela
+                </button>
+              </div>
+            </div>
+          ))}
+          <button type="button" onClick={onCreateCourse}
+            className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#166534]/30 py-3 text-sm font-semibold text-[#166534]">
+            <PlusCircle className="h-4 w-4" /> Skapa ny bana
+          </button>
+        </section>
+      )}
+
       {/* Tidigare rundor */}
-      <section>
-        <h2 className="mb-2 text-xs font-semibold uppercase tracking-[0.15em] text-[#112218]/55">
-          Tidigare rundor ({history.length})
-        </h2>
+      {tab === 'rounds' && <section>
         <p className="mb-2 text-xs text-[#112218]/55">Öppna en runda och tryck på "Rundan" för att ta bort den eller välja att den inte räknas i ditt HCP.</p>
         {history.length === 0 ? (
           <p className="rounded-2xl border border-dashed border-[#112218]/20 px-4 py-5 text-center text-sm text-[#112218]/55">
@@ -193,7 +270,7 @@ export const MyProfileView: React.FC<MyProfileViewProps> = ({ profile, playerCod
             ))}
           </div>
         )}
-      </section>
+      </section>}
     </div>
   );
 };

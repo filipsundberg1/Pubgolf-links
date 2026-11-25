@@ -16,7 +16,7 @@ export type FairwayShape =
   | 'double-dogleg';
 
 export interface PubHole {
-  holeNumber: number; // 1..9
+  holeNumber: number; // 1..MAX_HOLES
   courseId: string;
   ownerId: string;
   pubName: string;
@@ -47,13 +47,39 @@ export interface PubCourse {
   gameMode?: PubGolfGameMode;
   /** Öppen runda (syns under Spela, ingen kod krävs). Saknas = privat (kod). */
   isPublic?: boolean;
+  /** Antal hål på banan (1–MAX_HOLES). Saknas = 9 (äldre banor). */
+  holeCount?: number;
+}
+
+/** Max antal hål på en bana. Måste matcha firestore.rules. */
+export const MAX_HOLES = 18;
+export const DEFAULT_HOLE_COUNT = 9;
+
+export const courseHoleCount = (course?: { holeCount?: number } | null): number => {
+  const n = Math.round(Number(course?.holeCount) || DEFAULT_HOLE_COUNT);
+  return Math.max(1, Math.min(MAX_HOLES, n));
+};
+
+/** Ett hål som sparats lokalt på en runda (rundans egen version av banan). */
+export interface RoundHoleOverride {
+  pubName: string;
+  pubAddress: string;
+  drinkName: string;
+  drinkType: DrinkCategory;
+  volumeCl: number;
+  par: number;
+  hazardTitle: string;
+  hazardRule: string;
+  caddieTip: string;
+  lengthMeters: number;
+  shape: FairwayShape;
 }
 
 /**
  * En runda = ett faktiskt spelat tillfälle på en bana (mall).
  * Dokument-id är rundans kod (t.ex. PG-7KQ2MX) – bara den som har koden hittar rundan.
  */
-export type RoundStatus = 'active' | 'deleted';
+export type RoundStatus = 'active' | 'finished' | 'deleted';
 
 export interface PubRound {
   roundId: string;
@@ -68,6 +94,8 @@ export interface PubRound {
   memberIds: string[];
   locked: boolean;
   status: RoundStatus;
+  /** Rundans egna hål (ändrad ordning eller lokala ändringar). Saknas = banans hål gäller. */
+  customHoles?: RoundHoleOverride[];
 }
 
 /** Rundan i samma form som en PubCourse, så leaderboard/statistik kan återanvändas. */
@@ -148,7 +176,7 @@ export interface PlayerTourProfile extends ReusablePlayerProfile {
   keptResult?: boolean;
   teamId?: string;
   teamName?: string;
-  sips: number[]; // length 9, 0 = ej spelat, >= 1 = antal klunkar/svep
+  sips: number[]; // ett värde per hål, 0 = ej spelat, >= 1 = antal klunkar/svep
   totalSips: number;
   totalToPar: number;
   thruHoles: number;
@@ -294,7 +322,7 @@ export function generateInviteCode(seed?: number): string {
  * Creates 9 clean, unconfigured holes for a newly created round so the course creator
  * can define each pub, drink, and par from scratch.
  */
-export function createBlankHolesForCourse(courseId: string, ownerId: string): PubHole[] {
+export function createBlankHolesForCourse(courseId: string, ownerId: string, count = DEFAULT_HOLE_COUNT): PubHole[] {
   const defaultShapes: FairwayShape[] = [
     'straight',
     'dogleg-left',
@@ -307,7 +335,7 @@ export function createBlankHolesForCourse(courseId: string, ownerId: string): Pu
     'straight',
   ];
 
-  return Array.from({ length: 9 }, (_, idx) => {
+  return Array.from({ length: Math.max(1, Math.min(MAX_HOLES, count)) }, (_, idx) => {
     const holeNumber = idx + 1;
     return {
       holeNumber,
@@ -320,7 +348,7 @@ export function createBlankHolesForCourse(courseId: string, ownerId: string): Pu
       volumeCl: 40,
       par: 4,
       lengthMeters: 350,
-      shape: defaultShapes[idx] || 'straight',
+      shape: defaultShapes[idx % defaultShapes.length] || 'straight',
       hazardTitle: 'Lokalt pubhinder',
       hazardRule: 'Ange lokal regel eller pliktslag för detta hål.',
       caddieTip: 'Klicka på Anpassa Hål för att bestämma pub, dryck och par.',
@@ -485,13 +513,15 @@ export function calculateRoundSummary(sips: number[], holes: PubHole[]): RoundSu
   let currentStreak = 0;
   let maxStreak = 0;
 
-  for (let i = 0; i < 9; i++) {
+  const holeCount = orderedHoles.length || DEFAULT_HOLE_COUNT;
+  const frontCount = Math.ceil(holeCount / 2);
+  for (let i = 0; i < holeCount; i++) {
     const hole = orderedHoles[i];
     const holePar = hole ? hole.par : 4;
     const holeSips = sips[i] ?? 0;
 
     totalCoursePar += holePar;
-    if (i < 5) {
+    if (i < frontCount) {
       frontFivePar += holePar;
     } else {
       backFourPar += holePar;
@@ -502,7 +532,7 @@ export function calculateRoundSummary(sips: number[], holes: PubHole[]): RoundSu
       totalSips += holeSips;
       totalParPlayed += holePar;
 
-      if (i < 5) {
+      if (i < frontCount) {
         frontFiveSips += holeSips;
       } else {
         backFourSips += holeSips;
@@ -736,7 +766,8 @@ export function buildBrutalBallLeaderboard(
     let backFourSips = 0;
     let thruHoles = 0;
 
-    for (let idx = 0; idx < 9; idx++) {
+    const teamHoleCount = orderedHoles.length || DEFAULT_HOLE_COUNT;
+    for (let idx = 0; idx < teamHoleCount; idx++) {
       const baseHolePar = orderedHoles[idx]?.par ?? 4;
       let combinedHoleSips = 0;
       let playedCount = 0;
@@ -756,7 +787,7 @@ export function buildBrutalBallLeaderboard(
 
       if (combinedHoleSips > 0) {
         thruHoles += 1;
-        if (idx < 5) {
+        if (idx < Math.ceil(teamHoleCount / 2)) {
           frontFiveSips += combinedHoleSips;
         } else {
           backFourSips += combinedHoleSips;
@@ -851,10 +882,7 @@ export function mergeTourProfiles(
     if (!part.uid) continue;
     byUid.set(part.uid, {
       ...part,
-      sips:
-        Array.isArray(part.sips) && part.sips.length === 9
-          ? [...part.sips]
-          : [0, 0, 0, 0, 0, 0, 0, 0, 0],
+      sips: Array.isArray(part.sips) && part.sips.length > 0 ? [...part.sips] : new Array(DEFAULT_HOLE_COUNT).fill(0),
     });
   }
 
@@ -880,7 +908,7 @@ export function mergeTourProfiles(
       byUid.set(prof.uid, {
         ...prof,
         courseId: activeCourseId || 'none',
-        sips: [0, 0, 0, 0, 0, 0, 0, 0, 0],
+        sips: new Array(DEFAULT_HOLE_COUNT).fill(0),
         totalSips: 0,
         totalToPar: 0,
         thruHoles: 0,
@@ -908,7 +936,7 @@ export function mergeTourProfiles(
       byUid.set(myProfile.uid, {
         ...myProfile,
         courseId: activeCourseId || 'none',
-        sips: [0, 0, 0, 0, 0, 0, 0, 0, 0],
+        sips: new Array(DEFAULT_HOLE_COUNT).fill(0),
         totalSips: 0,
         totalToPar: 0,
         thruHoles: 0,
@@ -946,7 +974,7 @@ export interface PlayerRoundHistoryItem {
 export interface PlayerCareerStats {
   uid: string;
   roundsPlayed: number;
-  /** Rundor där alla 9 hål spelats – de som räknas till HCP. */
+  /** Rundor där alla hål spelats – de som räknas till HCP. */
   completedRounds: number;
   totalHolesPlayed: number;
   totalCareerSips: number;
@@ -990,9 +1018,9 @@ export function parseHandicap(value: string | undefined | null): number {
 }
 
 /**
- * HCP ungefär som World Handicap System: varje hel runda (9 hål) ger ett
+ * HCP ungefär som World Handicap System: varje hel runda ger ett
  * "differential" = resultat mot par omräknat till 18 hål. HCP = snittet av de
- * bästa av de senaste 20 rundorna (1 bästa vid 1–5 rundor, 2 vid 6–8 …, 8 vid 20).
+ * bästa av de senaste 20 rundorna. Indata = resultat mot par omräknat till 9 hål (1 bästa vid 1–5 rundor, 2 vid 6–8 …, 8 vid 20).
  * Max 54. Utan hela rundor är HCP 54.
  */
 export function calculateHandicapIndex(toParPerCompletedRound: number[]): number {
@@ -1068,7 +1096,8 @@ export function calculatePlayerCareerStats(
     careerPars += summary.pars;
 
     const orderedHoles = [...courseHoles].sort((a, b) => a.holeNumber - b.holeNumber);
-    for (let i = 0; i < 9; i++) {
+    const roundHoleCount = orderedHoles.length || DEFAULT_HOLE_COUNT;
+    for (let i = 0; i < roundHoleCount; i++) {
       const sips = participant.sips[i] ?? 0;
       const par = orderedHoles[i]?.par ?? 4;
       if (sips <= 0) continue;
@@ -1081,14 +1110,15 @@ export function calculatePlayerCareerStats(
       bestRound = historyItem;
     }
 
-    if (summary.thruHoles === 9) {
-      completed.push({ date: course.eventDate, toPar: summary.totalToPar });
+    if (summary.thruHoles === roundHoleCount) {
+      // Omräknat till 9 hål så att korta och långa banor väger lika i HCP
+      completed.push({ date: course.eventDate, toPar: (summary.totalToPar * DEFAULT_HOLE_COUNT) / roundHoleCount });
 
-      // Vinst: lägst score bland dem som spelat klart alla 9 hål (minst två). Delad vinst räknas.
+      // Vinst: lägst score bland dem som spelat klart alla hål (minst två). Delad vinst räknas.
       const field = (allParticipantsByCourse || participantsByCourse)[course.courseId] || courseParts;
       const finishers = field
         .map((p) => calculateRoundSummary(p.sips, courseHoles))
-        .filter((s) => s.thruHoles === 9);
+        .filter((s) => s.thruHoles === roundHoleCount);
       if (finishers.length >= 2) {
         const bestScore = Math.min(...finishers.map((s) => s.totalToPar));
         if (summary.totalToPar === bestScore) wins += 1;
@@ -1820,3 +1850,65 @@ export function formatRouteDuration(durationMillis: number): string {
 }
 
 
+
+// ---- Hål på banor och rundor ----
+
+/** Banans hål i spelordning, kapat till banans antal hål (fylls med tomma hål om något saknas). */
+export function courseHolesInPlay(
+  courseId: string,
+  ownerId: string,
+  loaded: PubHole[] | undefined,
+  holeCount: number
+): PubHole[] {
+  const blanks = createBlankHolesForCourse(courseId, ownerId, holeCount);
+  if (!loaded || loaded.length === 0) return blanks;
+  const byNumber = new Map(loaded.map((h) => [h.holeNumber, h]));
+  return blanks.map((b) => byNumber.get(b.holeNumber) || b);
+}
+
+export function holeToOverride(h: PubHole): RoundHoleOverride {
+  return {
+    pubName: h.pubName,
+    pubAddress: h.pubAddress,
+    drinkName: h.drinkName,
+    drinkType: h.drinkType,
+    volumeCl: h.volumeCl,
+    par: h.par,
+    hazardTitle: h.hazardTitle,
+    hazardRule: h.hazardRule,
+    caddieTip: h.caddieTip,
+    lengthMeters: h.lengthMeters,
+    shape: h.shape,
+  };
+}
+
+/** Rundans egna hål som PubHole, numrerade i spelordning. */
+export function holesFromOverrides(overrides: RoundHoleOverride[], courseId: string, ownerId: string): PubHole[] {
+  return overrides.slice(0, MAX_HOLES).map((o, idx) => ({
+    ...o,
+    holeNumber: idx + 1,
+    courseId,
+    ownerId,
+  }));
+}
+
+/** Byter plats på två hål (index) och numrerar om. */
+export function moveHole<T>(list: T[], from: number, to: number): T[] {
+  if (to < 0 || to >= list.length || from === to) return list;
+  const next = [...list];
+  const [item] = next.splice(from, 1);
+  next.splice(to, 0, item);
+  return next;
+}
+
+/** Ser ut som ett ifyllt värde (inte appens platshållartext). */
+export const isPlaceholderText = (text: string) =>
+  !text || /^Hål \d+( \(Ange pub\))?$|Ange |Välj dryck i banguiden|Lokalt pubhinder|Klicka på Anpassa|drick vatten/i.test(text.trim());
+
+/** Pubgolfens grundregler – visas i banguiden och under rundan. */
+export const GENERAL_RULES: { title: string; text: string }[] = [
+  { title: 'Klunkar = slag', text: 'Varje klunk är ett slag. Glaset ska vara tomt innan du lämnar hålet.' },
+  { title: 'Par', text: 'Klarar du hålet på färre klunkar än par är det birdie, eagle eller bättre. Hela glaset i ett svep = hole-in-one.' },
+  { title: 'Hålets regel', text: 'Bryter du mot hålets regel blir det straffslag. Gänget dömer – ingen nåd.' },
+  { title: 'Vinst', text: 'Lägst totalscore bland dem som spelat klart alla hål vinner rundan.' },
+];

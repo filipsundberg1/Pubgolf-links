@@ -542,11 +542,11 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
                             HÅL
                           </div>
                           <div className="text-xs font-bold text-[#112218]">
-                            {team.thruHoles === 9
+                            {team.thruHoles === orderedHoles.length
                               ? 'F'
                               : team.thruHoles === 0
                                 ? '—'
-                                : `${team.thruHoles}/9`}
+                                : `${team.thruHoles}/${orderedHoles.length}`}
                           </div>
                         </div>
 
@@ -580,7 +580,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
                     </div>
 
                     {/* 9-Hole Combined Team Sips Mini-Grid */}
-                    <div className="mt-2.5 grid grid-cols-9 gap-1 rounded-lg border border-[#112218]/10 bg-white p-1.5 text-center">
+                    <div className="mt-2.5 grid gap-1 rounded-lg border border-[#112218]/10 bg-white p-1.5 text-center" style={{ gridTemplateColumns: `repeat(${Math.min(orderedHoles.length, 9)}, minmax(0, 1fr))` }}>
                       {orderedHoles.map((h, idx) => {
                         const combinedSips = team.holeSips[idx] ?? 0;
                         const combinedPar = team.holeEffectivePars[idx] || h.par * team.members.length;
@@ -702,7 +702,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
                         </td>
 
                         <td className="px-3 py-3.5 text-center font-mono-tabular text-xs font-semibold text-[#112218]/80">
-                          {team.thruHoles === 9
+                          {team.thruHoles === orderedHoles.length
                             ? 'F'
                             : team.thruHoles === 0
                               ? '—'
@@ -805,11 +805,11 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
                             HÅL
                           </div>
                           <div className="text-xs font-bold text-[#112218]">
-                            {entry.summary.thruHoles === 9
+                            {entry.summary.thruHoles === orderedHoles.length
                               ? 'F'
                               : entry.summary.thruHoles === 0
                                 ? '—'
-                                : `${entry.summary.thruHoles}/9`}
+                                : `${entry.summary.thruHoles}/${orderedHoles.length}`}
                           </div>
                         </div>
 
@@ -825,7 +825,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
                     </div>
 
                     {/* Compact 9-Hole Mini-Grid (Fits all 9 holes across the phone width with zero scroll!) */}
-                    <div className="mt-3 grid grid-cols-9 gap-1 rounded-lg border border-[#112218]/10 bg-white p-1.5 text-center">
+                    <div className="mt-3 grid gap-1 rounded-lg border border-[#112218]/10 bg-white p-1.5 text-center" style={{ gridTemplateColumns: `repeat(${Math.min(orderedHoles.length, 9)}, minmax(0, 1fr))` }}>
                       {orderedHoles.map((h) => {
                         const s = entry.player.sips[h.holeNumber - 1] ?? 0;
                         return (
@@ -932,7 +932,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
                         </td>
 
                         <td className="px-3 py-3.5 text-center font-mono-tabular text-xs font-semibold text-[#112218]/80">
-                          {entry.summary.thruHoles === 9
+                          {entry.summary.thruHoles === orderedHoles.length
                             ? 'F'
                             : entry.summary.thruHoles === 0
                               ? '—'

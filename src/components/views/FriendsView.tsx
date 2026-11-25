@@ -8,7 +8,7 @@ interface FriendsViewProps {
   friends: ReusablePlayerProfile[];
   following: ReusablePlayerProfile[];
   requests: ReusablePlayerProfile[];
-  /** Folk man spelat med men inte följer. */
+  /** Alla andra spelare man inte lagt till än (senast aktiva först). */
   suggestions: ReusablePlayerProfile[];
   handicapFor: (uid: string) => string;
   onBack: () => void;
@@ -61,6 +61,7 @@ export const FriendsView: React.FC<FriendsViewProps> = ({
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [showCode, setShowCode] = useState(false);
 
   const run = async (key: string, fn: () => Promise<unknown>) => {
     setBusy(key);
@@ -81,12 +82,32 @@ export const FriendsView: React.FC<FriendsViewProps> = ({
         </button>
         <h1 className="font-display text-3xl font-bold text-[#112218]">Vänner</h1>
         <p className="mt-1 text-sm text-[#112218]/65">
-          Lägg till de du brukar spela med. Godkänner de dig blir ni vänner, annars följer du dem. Ditt spelar-ID:{' '}
+          Tryck "Lägg till" på de du kör med – då kan du ta med dem i rundor direkt. Ditt spelar-ID:{' '}
           <span className="font-mono font-bold text-[#112218]">{myPlayerCode || '…'}</span>
         </p>
       </div>
 
-      <form
+      {suggestions.length > 0 && (
+        <section>
+          <h2 className={h2}>Spelare i appen ({suggestions.length})</h2>
+          <ul className="space-y-2">
+            {suggestions.map((p) => (
+              <PersonRow key={p.uid} person={p} hcp={handicapFor(p.uid)} onOpen={() => onOpenPlayer(p.uid)}>
+                <button type="button" disabled={!!busy} onClick={() => void run(`f-${p.uid}`, () => onFollow(p.uid))}
+                  className={`${btn} bg-[#166534] text-white`}>
+                  {busy === `f-${p.uid}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserPlus className="h-3.5 w-3.5" />} Lägg till
+                </button>
+              </PersonRow>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {!showCode ? (
+        <button type="button" onClick={() => setShowCode(true)} className="text-xs font-semibold text-[#166534]">
+          Har du ett spelar-ID? Lägg till med ID
+        </button>
+      ) : <form
         className="rounded-3xl bg-[#112218] p-5 text-[#F6F4EE] shadow-lg"
         onSubmit={(e) => {
           e.preventDefault();
@@ -110,17 +131,17 @@ export const FriendsView: React.FC<FriendsViewProps> = ({
           </button>
         </div>
         {msg && <p className={`mt-2 text-xs ${msg.ok ? 'text-[#D4AF37]' : 'text-red-300'}`}>{msg.text}</p>}
-      </form>
+      </form>}
 
       {requests.length > 0 && (
         <section>
-          <h2 className={h2}>Vänförfrågningar ({requests.length})</h2>
+          <h2 className={h2}>Har lagt till dig ({requests.length})</h2>
           <ul className="space-y-2">
             {requests.map((p) => (
               <PersonRow key={p.uid} person={p} hcp={handicapFor(p.uid)} onOpen={() => onOpenPlayer(p.uid)}>
                 <button type="button" disabled={!!busy} onClick={() => void run(`acc-${p.uid}`, () => onFollow(p.uid))}
                   className={`${btn} bg-[#166534] text-white`}>
-                  <Check className="h-3.5 w-3.5" /> Godkänn
+                  <Check className="h-3.5 w-3.5" /> Lägg till tillbaka
                 </button>
                 <button type="button" disabled={!!busy} onClick={() => void run(`dis-${p.uid}`, () => onDismissRequest(p.uid))}
                   className={`${btn} border border-[#112218]/15 text-[#112218]/70`} aria-label="Ignorera">
@@ -136,7 +157,7 @@ export const FriendsView: React.FC<FriendsViewProps> = ({
         <h2 className={h2}>Vänner ({friends.length})</h2>
         {friends.length === 0 ? (
           <p className="rounded-2xl border border-dashed border-[#112218]/20 px-4 py-5 text-center text-sm text-[#112218]/55">
-            Inga vänner än. Lägg till någon med spelar-ID.
+            Inga vänner än. Lägg till någon i listan ovan.
           </p>
         ) : (
           <ul className="space-y-2">
@@ -154,13 +175,13 @@ export const FriendsView: React.FC<FriendsViewProps> = ({
 
       {following.length > 0 && (
         <section>
-          <h2 className={h2}>Följer – väntar på godkännande ({following.length})</h2>
+          <h2 className={h2}>Tillagda – har inte lagt till dig än ({following.length})</h2>
           <ul className="space-y-2">
             {following.map((p) => (
               <PersonRow key={p.uid} person={p} hcp={handicapFor(p.uid)} onOpen={() => onOpenPlayer(p.uid)}>
                 <button type="button" disabled={!!busy} onClick={() => void run(`un-${p.uid}`, () => onUnfollow(p.uid))}
                   className={`${btn} border border-[#112218]/15 text-[#112218]/70`}>
-                  Sluta följa
+                  Ta bort
                 </button>
               </PersonRow>
             ))}
@@ -168,21 +189,6 @@ export const FriendsView: React.FC<FriendsViewProps> = ({
         </section>
       )}
 
-      {suggestions.length > 0 && (
-        <section>
-          <h2 className={h2}>Du har spelat med</h2>
-          <ul className="space-y-2">
-            {suggestions.map((p) => (
-              <PersonRow key={p.uid} person={p} hcp={handicapFor(p.uid)} onOpen={() => onOpenPlayer(p.uid)}>
-                <button type="button" disabled={!!busy} onClick={() => void run(`f-${p.uid}`, () => onFollow(p.uid))}
-                  className={`${btn} bg-[#166534] text-white`}>
-                  <UserPlus className="h-3.5 w-3.5" /> Lägg till
-                </button>
-              </PersonRow>
-            ))}
-          </ul>
-        </section>
-      )}
     </div>
   );
 };

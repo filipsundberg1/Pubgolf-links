@@ -445,12 +445,12 @@ export const AvatarCustomizer: React.FC<AvatarCustomizerProps> = ({ value, onCha
 
   return (
     <div data-testid="avatar-customizer" className="space-y-4 rounded-xl border border-[#d8d0c0] bg-[#f9f6f0] p-4">
-      <div className="flex flex-col items-center gap-4 border-b border-[#e5dec9] pb-3 sm:flex-row">
-        <div className="flex gap-2">
+      {/* En avatar som följer med när man skrollar, så man ser ändringarna direkt */}
+      <div className="sticky top-[60px] z-10 -mx-4 -mt-4 flex items-center gap-4 rounded-t-xl border-b border-[#e5dec9] bg-[#f9f6f0]/95 px-4 py-3 shadow-[0_6px_12px_-10px_rgba(0,0,0,0.35)] backdrop-blur-sm">
+        <div className="shrink-0">
           <GolferAvatar avatarSeed={value} displayName={displayName} size="lg" pose="idle" wins={stats.wins} />
-          <GolferAvatar avatarSeed={value} displayName={displayName} size="lg" pose="celebrate" />
         </div>
-        <div className="text-center sm:text-left">
+        <div className="min-w-0 text-left">
           <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#856a32]">Spelarklädsel</div>
           <h4 className="font-serif text-lg font-bold text-[#141a17]">Bygg din pubgolf-avatar</h4>
           <p className="mt-0.5 text-xs text-[#54635b]">Kombinera fritt. Vissa saker låses upp när du spelar.</p>

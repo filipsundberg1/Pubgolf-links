@@ -5,7 +5,14 @@
 import { serverTimestamp, type DocumentData } from 'firebase/firestore';
 import {
   APP_ID,
+  DEFAULT_HOLE_COUNT,
+  MAX_HOLES,
+  VALID_DRINK_TYPES,
   calculateRoundSummary,
+  courseHoleCount,
+  type DrinkCategory,
+  type FairwayShape,
+  type RoundHoleOverride,
   type PlayerTourProfile,
   type PubCourse,
   type PubHole,
@@ -13,7 +20,8 @@ import {
   type ReusablePlayerProfile,
 } from '../utils/golfRules';
 
-export const EMPTY_SIPS = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+export const EMPTY_SIPS = new Array(DEFAULT_HOLE_COUNT).fill(0) as number[];
+export const emptySips = (count: number) => new Array(Math.max(1, Math.min(MAX_HOLES, count))).fill(0) as number[];
 
 export function parseProfile(d: DocumentData): ReusablePlayerProfile {
   return {
@@ -67,6 +75,7 @@ export function parseCourse(d: DocumentData): PubCourse {
     ownerName: String(d.ownerName),
     gameMode: d.gameMode === 'brutal' ? 'brutal' : 'single',
     isPublic: d.isPublic === true,
+    holeCount: courseHoleCount({ holeCount: typeof d.holeCount === 'number' ? d.holeCount : undefined }),
   };
 }
 
@@ -83,6 +92,8 @@ export function coursePayload(c: PubCourse): Record<string, unknown> {
     ownerName: c.ownerName.slice(0, 80),
     gameMode: c.gameMode === 'brutal' ? 'brutal' : 'single',
     isPublic: !!c.isPublic,
+    // 9 hål = standard och skrivs inte, så vanliga banor funkar även med äldre regler
+    ...(courseHoleCount(c) !== DEFAULT_HOLE_COUNT ? { holeCount: courseHoleCount(c) } : {}),
     updatedAt: serverTimestamp(),
   };
 }
@@ -139,7 +150,40 @@ export function parseRound(d: DocumentData): PubRound {
     gameMode: d.gameMode === 'brutal' ? 'brutal' : 'single',
     memberIds: Array.isArray(d.memberIds) ? d.memberIds.map(String) : [],
     locked: d.locked === true,
-    status: d.status === 'deleted' ? 'deleted' : 'active',
+    status: d.status === 'deleted' ? 'deleted' : d.status === 'finished' ? 'finished' : 'active',
+    customHoles: Array.isArray(d.customHoles) && d.customHoles.length > 0 ? d.customHoles.map(parseOverride) : undefined,
+  };
+}
+
+const SHAPES: FairwayShape[] = ['straight', 'dogleg-left', 'dogleg-right', 'island-green', 'double-dogleg'];
+const clampInt = (v: unknown, min: number, max: number, fallback: number) => {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback;
+};
+const str = (v: unknown, fallback: string, max: number) => {
+  const t = String(v ?? '').trim();
+  return (t.length >= 2 ? t : fallback).slice(0, max);
+};
+
+function parseOverride(d: DocumentData): RoundHoleOverride {
+  return sanitizeOverride(d as Partial<RoundHoleOverride>);
+}
+
+/** Rensar ett lokalt rundhål så det klarar databasens gränser. */
+export function sanitizeOverride(d: Partial<RoundHoleOverride>): RoundHoleOverride {
+  const drinkType = (VALID_DRINK_TYPES as string[]).includes(String(d.drinkType)) ? (d.drinkType as DrinkCategory) : 'lager';
+  return {
+    pubName: str(d.pubName, 'Pub', 80),
+    pubAddress: str(d.pubAddress, 'Ange gatuadress', 120),
+    drinkName: str(d.drinkName, 'Valfri dryck', 80),
+    drinkType,
+    volumeCl: clampInt(d.volumeCl, 2, 100, 40),
+    par: clampInt(d.par, 1, 6, 3),
+    hazardTitle: str(d.hazardTitle, 'Lokalt pubhinder', 80),
+    hazardRule: str(d.hazardRule, 'Ange lokal regel eller pliktslag för detta hål.', 180),
+    caddieTip: str(d.caddieTip, 'Inga ursäkter.', 200),
+    lengthMeters: clampInt(d.lengthMeters, 50, 650, 350),
+    shape: SHAPES.includes(d.shape as FairwayShape) ? (d.shape as FairwayShape) : 'straight',
   };
 }
 
@@ -157,12 +201,19 @@ export function roundPayload(r: PubRound): Record<string, unknown> {
     memberIds: r.memberIds,
     locked: r.locked,
     status: r.status,
+    ...(r.customHoles && r.customHoles.length > 0
+      ? { customHoles: r.customHoles.slice(0, MAX_HOLES).map(sanitizeOverride) }
+      : {}),
     updatedAt: serverTimestamp(),
   };
 }
 
-const readSips = (d: DocumentData): number[] =>
-  [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => Number(d[`sipsHole${n}`] || 0));
+/** Läser klunkar per hål. Alltid minst 9 fält (äldre format), upp till MAX_HOLES. */
+const readSips = (d: DocumentData): number[] => {
+  let last = DEFAULT_HOLE_COUNT;
+  for (let n = DEFAULT_HOLE_COUNT + 1; n <= MAX_HOLES; n++) if (`sipsHole${n}` in d) last = n;
+  return Array.from({ length: last }, (_, i) => Number(d[`sipsHole${i + 1}`] || 0));
+};
 
 /** Deltagare i en runda. Profilfält som inte sparas på rundan fylls i från profilen senare. */
 export function parseRoundParticipant(d: DocumentData, roundId: string): PlayerTourProfile {
@@ -204,8 +255,10 @@ export function roundParticipantPayload(
   roundId: string,
   holes: PubHole[]
 ): Record<string, unknown> {
-  const sips = p.sips.length === 9 ? p.sips : EMPTY_SIPS;
-  const summary = calculateRoundSummary(sips, holes);
+  // Spara ett fält per hål på banan, men alltid minst sipsHole1–9 (krävs av reglerna)
+  const fieldCount = Math.max(DEFAULT_HOLE_COUNT, Math.min(MAX_HOLES, holes.length || DEFAULT_HOLE_COUNT));
+  const sips = Array.from({ length: fieldCount }, (_, i) => p.sips[i] ?? 0);
+  const summary = calculateRoundSummary(sips.slice(0, holes.length || DEFAULT_HOLE_COUNT), holes);
   const payload: Record<string, unknown> = {
     uid: p.uid,
     roundId,
