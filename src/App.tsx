@@ -43,6 +43,10 @@ import {
   ADMIN_UIDS,
   APP_ID,
   MAX_HOLES,
+  MAX_PENALTIES,
+  PENALTY_TYPES,
+  type PenaltyEvent,
+  type PenaltyType,
   ROUND_CODE_PATTERN,
   buildLeaderboard,
   buildScoreCelebrationClip,
@@ -866,7 +870,7 @@ export default function App() {
     .map((r) => {
       const mine = (participantsByRound[r.roundId] || []).find((p) => p.uid === uid);
       if (!mine) return null;
-      const summary = calculateRoundSummary(mine.sips, holesByRoundId[r.roundId] || []);
+      const summary = calculateRoundSummary(mine.sips, holesByRoundId[r.roundId] || [], mine.penalties);
       if (summary.thruHoles === 0) return null;
       return {
         courseId: r.roundId,
@@ -1269,7 +1273,7 @@ export default function App() {
     const rId = activeRound.roundId;
     const nextSips = Array.from({ length: Math.max(activeHoles.length, me.sips.length) }, (_, i) => me.sips[i] || 0);
     nextSips[holeNumber - 1] = newSips;
-    const summary = calculateRoundSummary(nextSips, activeHoles);
+    const summary = calculateRoundSummary(nextSips, activeHoles, me.penalties);
 
     // Spara direkt lokalt så firandet inte visas två gånger när Firestore ekar tillbaka
     prevSipsByRoundRef.current[rId] = { ...(prevSipsByRoundRef.current[rId] || {}), [uid]: [...nextSips] };
@@ -1299,6 +1303,39 @@ export default function App() {
     void setDoc(participantRef(rId, uid), roundParticipantPayload(updated, rId, activeHoles)).catch((error) =>
       reportFirestoreError(error, OperationType.WRITE, `rounds/${rId}/participants/${uid}`)
     );
+  };
+
+  // ---- Plikt och bonus ----
+  const writeMyPenalties = (next: PenaltyEvent[]) => {
+    if (!activeRound || !me || activeRound.status === 'deleted') return;
+    const rId = activeRound.roundId;
+    const summary = calculateRoundSummary(me.sips, activeHoles, next);
+    const totals = { totalSips: summary.totalSips, totalToPar: summary.totalToPar, thruHoles: summary.thruHoles };
+    const updated: PlayerTourProfile = { ...me, penalties: next, ...totals };
+    setParticipantsByRound((prev) => ({
+      ...prev,
+      [rId]: (prev[rId] || []).map((p) => (p.uid === uid ? { ...p, penalties: next, ...totals } : p)),
+    }));
+    void setDoc(participantRef(rId, uid), roundParticipantPayload(updated, rId, activeHoles)).catch((error) =>
+      reportFirestoreError(error, OperationType.WRITE, `rounds/${rId}/participants/${uid}`)
+    );
+  };
+  const handleAddPenalty = (hole: number, type: PenaltyType) => {
+    if (!me) return;
+    const cur = me.penalties || [];
+    if (cur.length >= MAX_PENALTIES) return;
+    // Split the G går bara en gång per hål
+    if (type === 'splitg' && cur.some((e) => e.hole === hole && e.type === 'splitg')) return;
+    writeMyPenalties([...cur, { hole, type }]);
+    const t = PENALTY_TYPES[type];
+    showNotice(type === 'splitg' ? 'Split the G! −2 på totalen 🍺' : `${t.label}: +${t.strokes} slag`);
+  };
+  const handleRemovePenalty = (hole: number, type: PenaltyType) => {
+    if (!me) return;
+    const cur = me.penalties || [];
+    const idx = cur.map((e, i) => (e.hole === hole && e.type === type ? i : -1)).filter((i) => i >= 0).pop();
+    if (idx === undefined) return;
+    writeMyPenalties(cur.filter((_, i) => i !== idx));
   };
 
   const handleAssignTeam = async (playerUids: string[], teamId: string, teamName: string) => {
@@ -1725,6 +1762,8 @@ export default function App() {
                 onSelectHole={setSelectedHoleNum}
                 onMinimize={minimizeRound}
                 onUpdateHoleSips={handleUpdateHoleSips}
+                onAddPenalty={handleAddPenalty}
+                onRemovePenalty={handleRemovePenalty}
                 onSaveCourseMeta={async (c) => {
                   // Spelform hör till rundan. Banan ändras aldrig från en runda.
                   if (activeRound.ownerId === uid && c.gameMode && c.gameMode !== activeRound.gameMode) {

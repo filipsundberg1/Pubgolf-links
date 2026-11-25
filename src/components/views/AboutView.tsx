@@ -18,7 +18,8 @@ export const AboutView: React.FC<{ onBack: () => void }> = ({ onBack }) => (
       <ul className="list-disc space-y-1 pl-5">
         <li>Varje pub är ett hål. Varje klunk räknas som ett slag.</li>
         <li>Varje hål har ett par (1–6 klunkar). Under par = birdie, eagle … Hela glaset i ett svep = hole-in-one.</li>
-        <li>Hål kan ha egna regler – bryter man dem kan det bli straffslag.</li>
+        <li>Hål kan ha egna regler. Brott = 2 slag plikt per brott, på svordomshålet 1 slag per svordom. Spya eller trilla = 2 slag.</li>
+        <li>Split the G på första klunken = −2 slag på totalen. Plikt och bonus läggs in med knapparna på hålet och summeras i tabellen.</li>
         <li>En bana är banguiden: barer, dryck, par och regler – 1 till 18 hål. Öppna banor syns för alla under Spela.</li>
         <li>Vill ni köra en bana i annan ordning? Kör baklänges när ni startar, eller låt rundans ägare byta plats på hålen bara för er runda.</li>
         <li>En runda är när ni spelar banan. Den som startar rundan får en privat kod att dela, kan lägga till spelare med spelar-ID och låsa rundan.</li>

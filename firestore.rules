@@ -241,7 +241,7 @@ service cloud.firestore {
         'sipsHole6', 'sipsHole7', 'sipsHole8', 'sipsHole9',
         'sipsHole10', 'sipsHole11', 'sipsHole12', 'sipsHole13', 'sipsHole14',
         'sipsHole15', 'sipsHole16', 'sipsHole17', 'sipsHole18',
-        'totalSips', 'totalToPar', 'thruHoles', 'countsForHcp', 'keptResult', 'updatedAt'
+        'totalSips', 'totalToPar', 'thruHoles', 'countsForHcp', 'keptResult', 'penalties', 'updatedAt'
       ]) &&
       data.uid == playerId &&
       data.roundId == roundId &&
@@ -262,8 +262,10 @@ service cloud.firestore {
       data.sipsHole8 is int && data.sipsHole8 >= 0 && data.sipsHole8 <= 25 &&
       data.sipsHole9 is int && data.sipsHole9 >= 0 && data.sipsHole9 <= 25 &&
       extraSipsValid(data) &&
+      // Plikt och bonus: lista med {hole, type}, max 100
+      (!('penalties' in data) || (data.penalties is list && data.penalties.size() <= 100)) &&
       data.totalSips is int && data.totalSips >= 0 && data.totalSips <= 450 &&
-      data.totalToPar is int && data.totalToPar >= -108 && data.totalToPar <= 450 &&
+      data.totalToPar is int && data.totalToPar >= -300 && data.totalToPar <= 700 &&
       data.thruHoles is int && data.thruHoles >= 0 && data.thruHoles <= 18 &&
       data.countsForHcp is bool &&
       data.keptResult is bool &&
@@ -354,7 +356,7 @@ service cloud.firestore {
                 'sipsHole6', 'sipsHole7', 'sipsHole8', 'sipsHole9',
                 'sipsHole10', 'sipsHole11', 'sipsHole12', 'sipsHole13', 'sipsHole14',
                 'sipsHole15', 'sipsHole16', 'sipsHole17', 'sipsHole18',
-                'totalSips', 'totalToPar', 'thruHoles', 'countsForHcp', 'keptResult', 'updatedAt'
+                'totalSips', 'totalToPar', 'thruHoles', 'countsForHcp', 'keptResult', 'penalties', 'updatedAt'
               ])
             ) ||
             (

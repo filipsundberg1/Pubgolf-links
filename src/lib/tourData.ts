@@ -7,6 +7,9 @@ import {
   APP_ID,
   DEFAULT_HOLE_COUNT,
   MAX_HOLES,
+  MAX_PENALTIES,
+  PENALTY_TYPES,
+  type PenaltyEvent,
   VALID_DRINK_TYPES,
   calculateRoundSummary,
   courseHoleCount,
@@ -215,6 +218,18 @@ const readSips = (d: DocumentData): number[] => {
   return Array.from({ length: last }, (_, i) => Number(d[`sipsHole${i + 1}`] || 0));
 };
 
+/** Plikt/bonus-listan på en deltagare. Okända typer och hål hoppas över. */
+export function parsePenalties(v: unknown): PenaltyEvent[] {
+  if (!Array.isArray(v)) return [];
+  const out: PenaltyEvent[] = [];
+  for (const item of v.slice(0, MAX_PENALTIES)) {
+    const hole = Math.round(Number((item as { hole?: unknown })?.hole));
+    const type = String((item as { type?: unknown })?.type) as PenaltyEvent['type'];
+    if (hole >= 1 && hole <= MAX_HOLES && type in PENALTY_TYPES) out.push({ hole, type });
+  }
+  return out;
+}
+
 /** Deltagare i en runda. Profilfält som inte sparas på rundan fylls i från profilen senare. */
 export function parseRoundParticipant(d: DocumentData, roundId: string): PlayerTourProfile {
   return {
@@ -239,6 +254,7 @@ export function parseRoundParticipant(d: DocumentData, roundId: string): PlayerT
     teamName: d.teamName ? String(d.teamName) : undefined,
     countsForHcp: d.countsForHcp !== false,
     keptResult: d.keptResult === true,
+    penalties: parsePenalties(d.penalties),
   };
 }
 
@@ -258,7 +274,8 @@ export function roundParticipantPayload(
   // Spara ett fält per hål på banan, men alltid minst sipsHole1–9 (krävs av reglerna)
   const fieldCount = Math.max(DEFAULT_HOLE_COUNT, Math.min(MAX_HOLES, holes.length || DEFAULT_HOLE_COUNT));
   const sips = Array.from({ length: fieldCount }, (_, i) => p.sips[i] ?? 0);
-  const summary = calculateRoundSummary(sips.slice(0, holes.length || DEFAULT_HOLE_COUNT), holes);
+  const penalties = parsePenalties(p.penalties);
+  const summary = calculateRoundSummary(sips.slice(0, holes.length || DEFAULT_HOLE_COUNT), holes, penalties);
   const payload: Record<string, unknown> = {
     uid: p.uid,
     roundId,
@@ -276,6 +293,8 @@ export function roundParticipantPayload(
   sips.forEach((s, i) => {
     payload[`sipsHole${i + 1}`] = Math.max(0, Math.min(25, Math.round(s) || 0));
   });
+  // Skrivs bara när det finns plikt/bonus, så att rundor utan plikt funkar även med äldre regler
+  if (penalties.length > 0) payload.penalties = penalties.map((e) => ({ hole: e.hole, type: e.type }));
   if (p.playerCode) payload.playerCode = p.playerCode.slice(0, 12);
   if (p.teamId) payload.teamId = p.teamId.slice(0, 64);
   if (p.teamName) payload.teamName = p.teamName.slice(0, 60);

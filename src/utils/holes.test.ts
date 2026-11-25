@@ -123,3 +123,38 @@ test('utkast ↔ hål klarar databasens gränser', () => {
   assert.equal(o.volumeCl, 100);
   assert.ok(o.hazardTitle.length >= 2 && o.caddieTip.length >= 2);
 });
+
+test('plikt och Split the G läggs på totalen', async () => {
+  const { buildLeaderboard, penaltyTotals, isSwearHole } = await import('./golfRules');
+  const h = holes(3, 3);
+  const s = calculateRoundSummary([3, 3, 3], h, [
+    { hole: 1, type: 'rule' },
+    { hole: 2, type: 'swear' },
+    { hole: 2, type: 'swear' },
+    { hole: 3, type: 'splitg' },
+    { hole: 9, type: 'puke' }, // hål som inte finns räknas inte
+  ]);
+  assert.equal(s.penaltyStrokes, 4);
+  assert.equal(s.bonusStrokes, 2);
+  assert.equal(s.totalToPar, 2);
+  assert.equal(s.toParFormatted, '+2');
+  assert.equal(penaltyTotals([{ hole: 1, type: 'fall' }], 3).adjustment, 2);
+  // Plikt räknas även innan man registrerat score
+  assert.equal(calculateRoundSummary([0, 0, 0], h, [{ hole: 1, type: 'puke' }]).totalToPar, 2);
+  const a = { ...player('a', [3, 3, 3]), penalties: [{ hole: 1, type: 'splitg' as const }] };
+  const b = player('b', [2, 3, 3]);
+  const board = buildLeaderboard([b, a], h);
+  assert.equal(board[0].player.uid, 'a'); // −2 slår −1
+  assert.ok(isSwearHole({ hazardTitle: 'Svärförbud', hazardRule: '' }));
+  assert.ok(!isSwearHole({ hazardTitle: 'Vänsterhand', hazardRule: 'Bara vänster' }));
+});
+
+test('plikt sparas och läses på deltagaren', () => {
+  const p = { ...player('a', [3, 3, 3]), penalties: [{ hole: 2, type: 'rule' as const }] };
+  const payload = roundParticipantPayload(p, 'PG-AAAA', holes(3, 3));
+  assert.deepEqual(payload.penalties, [{ hole: 2, type: 'rule' }]);
+  assert.equal(payload.totalToPar, 2);
+  const back = parseRoundParticipant({ ...payload, uid: 'a', penalties: [...(payload.penalties as object[]), { hole: 1, type: 'hack' }] }, 'PG-AAAA');
+  assert.deepEqual(back.penalties, [{ hole: 2, type: 'rule' }]);
+  assert.equal('penalties' in roundParticipantPayload(player('a', [1]), 'PG-AAAA', holes(3)), false);
+});

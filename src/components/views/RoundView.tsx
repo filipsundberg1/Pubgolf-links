@@ -21,6 +21,10 @@ import {
 import {
   DRINK_CATALOG,
   GAME_MODE_LABELS,
+  PENALTY_ORDER,
+  PENALTY_TYPES,
+  isSwearHole,
+  type PenaltyType,
   buildLeaderboard,
   calculateRoundSummary,
   evaluateGolfHoleScore,
@@ -63,6 +67,8 @@ interface RoundViewProps {
   onSelectHole: (n: number) => void;
   onMinimize: () => void;
   onUpdateHoleSips: (holeNumber: number, sips: number) => void;
+  onAddPenalty: (holeNumber: number, type: PenaltyType) => void;
+  onRemovePenalty: (holeNumber: number, type: PenaltyType) => void;
   onSaveCourseMeta: (course: PubCourse) => Promise<void>;
   /** Spara hålen bara för den här rundan. null = tillbaka till banans original. */
   onSaveRoundHoles: (holes: HoleDraft[] | null) => Promise<void>;
@@ -88,6 +94,8 @@ export const RoundView: React.FC<RoundViewProps> = ({
   onSelectHole,
   onMinimize,
   onUpdateHoleSips,
+  onAddPenalty,
+  onRemovePenalty,
   onSaveCourseMeta,
   onSaveRoundHoles,
   onAssignTeam,
@@ -113,7 +121,7 @@ export const RoundView: React.FC<RoundViewProps> = ({
     setDraftSips(savedSips || hole?.par || 1);
   }, [hole?.holeNumber, savedSips, hole?.par]);
 
-  const summary = useMemo(() => calculateRoundSummary(me.sips, holes), [me.sips, holes]);
+  const summary = useMemo(() => calculateRoundSummary(me.sips, holes, me.penalties), [me.sips, holes, me.penalties]);
   const board = useMemo(() => buildLeaderboard(players, holes), [players, holes]);
   const myRank = board.find((e) => e.player.uid === me.uid);
   const anyScores = players.some((p) => p.sips.some((s) => s > 0));
@@ -144,6 +152,12 @@ export const RoundView: React.FC<RoundViewProps> = ({
   const hasRule = !isPlaceholder(hole.hazardTitle) || !isPlaceholder(hole.hazardRule);
   const isDirty = draftSips !== savedSips;
   const isLast = hole.holeNumber >= holes.length;
+  const swearHole = isSwearHole(hole);
+  const holePenalties = (me.penalties || []).filter((e) => e.hole === hole.holeNumber);
+  const countOn = (type: PenaltyType) => holePenalties.filter((e) => e.type === type).length;
+  const penaltyOrder: PenaltyType[] = swearHole ? ['swear', ...PENALTY_ORDER.filter((t) => t !== 'swear')] : PENALTY_ORDER;
+  const signed = (n: number) => (n > 0 ? `+${n}` : `${n}`);
+  const sipsToPar = summary.totalToPar - summary.penaltyStrokes + summary.bonusStrokes;
 
   const share = async () => {
     const url = `${window.location.origin}/?join=${encodeURIComponent(course.inviteCode)}`;
@@ -281,14 +295,25 @@ export const RoundView: React.FC<RoundViewProps> = ({
             </div>
           </div>
 
-          {hasRule && (
-            <div className="mt-3 rounded-2xl border border-[#D4AF37]/40 bg-[#D4AF37]/10 px-4 py-3">
+          {/* Hålets regel – alltid synlig ihop med resten av hålet */}
+          <div className={`mt-3 rounded-2xl border px-4 py-3 ${hasRule ? 'border-[#D4AF37]/50 bg-[#D4AF37]/10' : 'border-white/10 bg-white/5'}`}>
+            <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-sm font-bold text-[#D4AF37]">
-                <ShieldAlert className="h-4 w-4" /> {isPlaceholder(hole.hazardTitle) ? 'Regel' : hole.hazardTitle}
+                <ShieldAlert className="h-4 w-4" />
+                {hasRule ? (isPlaceholder(hole.hazardTitle) ? 'Regel på hålet' : hole.hazardTitle) : 'Ingen egen regel på hålet'}
               </div>
-              {!isPlaceholder(hole.hazardRule) && <p className="mt-1 text-sm text-[#F6F4EE]/85">{hole.hazardRule}</p>}
+              <span className="shrink-0 rounded-full bg-black/25 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#F6F4EE]/80">
+                {swearHole ? '+1 per svordom' : hasRule ? '+2 per brott' : 'Grundregler'}
+              </span>
             </div>
-          )}
+            <p className="mt-1 text-sm text-[#F6F4EE]/85">
+              {hasRule
+                ? isPlaceholder(hole.hazardRule)
+                  ? 'Se rubriken.'
+                  : hole.hazardRule
+                : 'Grundreglerna gäller: spya eller trilla = 2 slag, Split the G på första klunken = −2.'}
+            </p>
+          </div>
 
           {!isPlaceholder(hole.caddieTip) && (
             <p className="mt-3 text-xs italic text-[#F6F4EE]/55">Caddietips: {hole.caddieTip}</p>
@@ -366,6 +391,45 @@ export const RoundView: React.FC<RoundViewProps> = ({
           )}
         </div>
 
+        {/* Plikt & bonus – läggs på totalen */}
+        <div className="mt-5 border-t border-[#112218]/10 pt-4">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <div className="text-xs font-semibold uppercase tracking-[0.15em] text-[#112218]/55">Plikt & bonus på hål {hole.holeNumber}</div>
+            <button type="button" onClick={() => setSheet('rules')} className="text-[11px] font-semibold text-[#166534]">Regler</button>
+          </div>
+          <div className="grid grid-cols-3 gap-1.5">
+            {penaltyOrder.map((type) => {
+              const t = PENALTY_TYPES[type];
+              const bonus = t.strokes < 0;
+              const n = countOn(type);
+              const disabled = type === 'splitg' && n > 0;
+              return (
+                <button key={type} type="button" disabled={disabled} title={t.hint}
+                  onClick={() => onAddPenalty(hole.holeNumber, type)}
+                  className={`relative flex flex-col items-center justify-center rounded-xl border px-1 py-2 text-center transition active:scale-95 disabled:opacity-40 ${
+                    bonus ? 'border-[#166534]/40 bg-[#166534]/10 text-[#166534]' : 'border-red-200 bg-red-50/60 text-red-800'
+                  }`}>
+                  <span className="font-mono text-sm font-black">{signed(t.strokes)}</span>
+                  <span className="text-[11px] font-semibold leading-tight">{t.label}</span>
+                  {n > 0 && (
+                    <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-[#112218] px-1 text-[10px] font-bold text-[#F6F4EE]">{n}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          {holePenalties.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {PENALTY_ORDER.filter((t) => countOn(t) > 0).map((type) => (
+                <button key={type} type="button" onClick={() => onRemovePenalty(hole.holeNumber, type)}
+                  className="inline-flex items-center gap-1 rounded-full border border-[#112218]/15 bg-white px-2.5 py-1 text-[11px] font-semibold text-[#112218]/75">
+                  <RotateCcw className="h-3 w-3" /> Ångra {PENALTY_TYPES[type].label.toLowerCase()}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
         <div className="mt-4 grid grid-cols-3 divide-x divide-[#112218]/10 rounded-2xl bg-[#F6F4EE] py-3 text-center">
           <div>
             <div className="font-mono text-xl font-black text-[#112218]">{summary.toParFormatted}</div>
@@ -380,6 +444,14 @@ export const RoundView: React.FC<RoundViewProps> = ({
             <div className="text-[10px] font-semibold uppercase tracking-wider text-[#112218]/50">Placering</div>
           </div>
         </div>
+        {(summary.penaltyStrokes > 0 || summary.bonusStrokes > 0) && (
+          <p className="mt-2 text-center text-xs text-[#112218]/60">
+            Klunkar {signed(sipsToPar) === '0' ? 'E' : signed(sipsToPar)}
+            {summary.penaltyStrokes > 0 && <> · plikt <span className="font-semibold text-red-700">+{summary.penaltyStrokes}</span></>}
+            {summary.bonusStrokes > 0 && <> · Split the G <span className="font-semibold text-[#166534]">−{summary.bonusStrokes}</span></>}
+            {' '}= <span className="font-semibold text-[#112218]">{summary.toParFormatted}</span>
+          </p>
+        )}
       </section>
 
       {/* Topp-listan + knappar */}
@@ -395,6 +467,11 @@ export const RoundView: React.FC<RoundViewProps> = ({
               <span className="w-7 text-center font-mono text-sm font-bold text-[#112218]/70">{e.positionLabel}</span>
               <GolferAvatar avatarSeed={e.player.avatarSeed} wins={e.player.wins} displayName={e.player.displayName} size="xs" />
               <span className="min-w-0 flex-1 truncate text-sm font-medium text-[#112218]">{e.player.displayName}</span>
+              {(e.summary.penaltyStrokes > 0 || e.summary.bonusStrokes > 0) && (
+                <span className="text-[10px] font-semibold text-red-700/80" title="Plikt och bonus">
+                  P{e.summary.penaltyStrokes === e.summary.bonusStrokes ? '±0' : signed(e.summary.penaltyStrokes - e.summary.bonusStrokes)}
+                </span>
+              )}
               <span className="text-xs text-[#112218]/50">Thru {e.summary.thruHoles}</span>
               <span className="w-10 text-right font-mono text-sm font-bold text-[#112218]">{e.summary.toParFormatted}</span>
             </li>
@@ -450,6 +527,13 @@ export const RoundView: React.FC<RoundViewProps> = ({
               <span className="font-mono text-4xl font-black">{summary.toParFormatted}</span>
               <span className="text-sm text-[#F6F4EE]/70">{summary.totalSips} klunkar · {summary.thruHoles}/{holes.length} hål · {myRank?.positionLabel || '–'}</span>
             </div>
+            {(summary.penaltyStrokes > 0 || summary.bonusStrokes > 0) && (
+              <div className="mt-2 grid grid-cols-3 gap-2 border-t border-white/10 pt-2 text-center text-xs">
+                <div><div className="font-mono text-base font-black">{signed(sipsToPar) === '0' ? 'E' : signed(sipsToPar)}</div><div className="text-[#F6F4EE]/55">Klunkar</div></div>
+                <div><div className="font-mono text-base font-black text-red-300">+{summary.penaltyStrokes}</div><div className="text-[#F6F4EE]/55">Plikt</div></div>
+                <div><div className="font-mono text-base font-black text-[#D4AF37]">−{summary.bonusStrokes}</div><div className="text-[#F6F4EE]/55">Split the G</div></div>
+              </div>
+            )}
           </div>
           {summary.thruHoles < holes.length && (
             <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-900">

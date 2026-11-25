@@ -176,6 +176,8 @@ export interface PlayerTourProfile extends ReusablePlayerProfile {
   keptResult?: boolean;
   teamId?: string;
   teamName?: string;
+  /** Plikt och bonus (regelbrott, svordom, Split the G …) som läggs på totalen. */
+  penalties?: PenaltyEvent[];
   sips: number[]; // ett värde per hål, 0 = ej spelat, >= 1 = antal klunkar/svep
   totalSips: number;
   totalToPar: number;
@@ -471,7 +473,50 @@ export function evaluateGolfHoleScore(sips: number, par: number): GolfScoreEvalu
   };
 }
 
+// ---- Plikt och bonus ----
+
+export type PenaltyType = 'rule' | 'swear' | 'puke' | 'fall' | 'other' | 'splitg';
+
+export interface PenaltyEvent {
+  /** Hålnummer (1..) där det hände. */
+  hole: number;
+  type: PenaltyType;
+}
+
+/** Slag som läggs på (eller dras från) totalscoren. Måste matcha GENERAL_RULES. */
+export const PENALTY_TYPES: Record<PenaltyType, { label: string; strokes: number; hint: string }> = {
+  rule: { label: 'Regelbrott', strokes: 2, hint: 'Bröt mot hålets regel' },
+  swear: { label: 'Svordom', strokes: 1, hint: 'Svordomshålet: per svordom' },
+  puke: { label: 'Spya', strokes: 2, hint: 'Spydde' },
+  fall: { label: 'Snubbla / trilla', strokes: 2, hint: 'Snubblade eller trillade' },
+  other: { label: 'Övrig plikt', strokes: 1, hint: 'Gänget dömer' },
+  splitg: { label: 'Split the G', strokes: -2, hint: 'Splittade G:et på första klunken' },
+};
+export const PENALTY_ORDER: PenaltyType[] = ['rule', 'swear', 'puke', 'fall', 'other', 'splitg'];
+export const MAX_PENALTIES = 100;
+
+/** Summan av plikt (+) och bonus (−) för hålen som finns på banan. */
+export function penaltyTotals(penalties: PenaltyEvent[] | undefined, holeCount: number) {
+  let penaltyStrokes = 0;
+  let bonusStrokes = 0;
+  for (const e of penalties || []) {
+    if (!(e.hole >= 1 && e.hole <= holeCount)) continue;
+    const strokes = PENALTY_TYPES[e.type]?.strokes ?? 0;
+    if (strokes > 0) penaltyStrokes += strokes;
+    else bonusStrokes -= strokes;
+  }
+  return { penaltyStrokes, bonusStrokes, adjustment: penaltyStrokes - bonusStrokes };
+}
+
+/** Ser ut som svordomshålet (då ger varje svordom 1 slag i stället för 2). */
+export const isSwearHole = (h: { hazardTitle: string; hazardRule: string }) =>
+  /sv(ä|a)r|svordom|svära/i.test(`${h.hazardTitle} ${h.hazardRule}`);
+
 export interface RoundSummary {
+  /** Plikt som lagts på totalen (slag). */
+  penaltyStrokes: number;
+  /** Bonus som dragits från totalen (slag, positivt tal). */
+  bonusStrokes: number;
   totalSips: number;
   totalParPlayed: number;
   totalCoursePar: number;
@@ -492,7 +537,7 @@ export interface RoundSummary {
   underParStreak: number;
 }
 
-export function calculateRoundSummary(sips: number[], holes: PubHole[]): RoundSummary {
+export function calculateRoundSummary(sips: number[], holes: PubHole[], penalties?: PenaltyEvent[]): RoundSummary {
   const orderedHoles = [...holes].sort((a, b) => a.holeNumber - b.holeNumber);
   let totalSips = 0;
   let totalParPlayed = 0;
@@ -565,12 +610,15 @@ export function calculateRoundSummary(sips: number[], holes: PubHole[]): RoundSu
     }
   }
 
-  const totalToPar = thruHoles === 0 ? 0 : totalSips - totalParPlayed;
-  const toParFormatted =
-    thruHoles === 0 ? 'E' : totalToPar === 0 ? 'E' : totalToPar > 0 ? `+${totalToPar}` : `${totalToPar}`;
+  const { penaltyStrokes, bonusStrokes, adjustment } = penaltyTotals(penalties, holeCount);
+  // Plikt och bonus läggs på totalen, även på hål som inte fått score än
+  const totalToPar = (thruHoles === 0 ? 0 : totalSips - totalParPlayed) + adjustment;
+  const toParFormatted = totalToPar === 0 ? 'E' : totalToPar > 0 ? `+${totalToPar}` : `${totalToPar}`;
   const sipPrecisionPct = thruHoles === 0 ? 0 : Math.round((parOrBetterCount / thruHoles) * 100);
 
   return {
+    penaltyStrokes,
+    bonusStrokes,
     totalSips,
     totalParPlayed,
     totalCoursePar,
@@ -602,7 +650,7 @@ export interface LeaderboardEntry {
 export function buildLeaderboard(players: PlayerTourProfile[], holes: PubHole[]): LeaderboardEntry[] {
   const enriched = players.map((player) => ({
     player,
-    summary: calculateRoundSummary(player.sips, holes),
+    summary: calculateRoundSummary(player.sips, holes, player.penalties),
   }));
 
   enriched.sort((a, b) => {
@@ -689,7 +737,7 @@ export function buildBrutalBallLeaderboard(
     rank: 1,
     positionLabel: '1',
     player,
-    summary: calculateRoundSummary(player.sips, orderedHoles),
+    summary: calculateRoundSummary(player.sips, orderedHoles, player.penalties),
   }));
 
   // Group by explicit teamId or teamName (chunked into pairs of at most 2)
@@ -1069,7 +1117,7 @@ export function calculatePlayerCareerStats(
     const courseHoles =
       holesByCourse[course.courseId] ||
       createBlankHolesForCourse(course.courseId, course.ownerId);
-    const summary = calculateRoundSummary(participant.sips, courseHoles);
+    const summary = calculateRoundSummary(participant.sips, courseHoles, participant.penalties);
 
     const historyItem: PlayerRoundHistoryItem = {
       courseId: course.courseId,
@@ -1117,7 +1165,7 @@ export function calculatePlayerCareerStats(
       // Vinst: lägst score bland dem som spelat klart alla hål (minst två). Delad vinst räknas.
       const field = (allParticipantsByCourse || participantsByCourse)[course.courseId] || courseParts;
       const finishers = field
-        .map((p) => calculateRoundSummary(p.sips, courseHoles))
+        .map((p) => calculateRoundSummary(p.sips, courseHoles, p.penalties))
         .filter((s) => s.thruHoles === roundHoleCount);
       if (finishers.length >= 2) {
         const bestScore = Math.min(...finishers.map((s) => s.totalToPar));
@@ -1909,6 +1957,11 @@ export const isPlaceholderText = (text: string) =>
 export const GENERAL_RULES: { title: string; text: string }[] = [
   { title: 'Klunkar = slag', text: 'Varje klunk är ett slag. Glaset ska vara tomt innan du lämnar hålet.' },
   { title: 'Par', text: 'Klarar du hålet på färre klunkar än par är det birdie, eagle eller bättre. Hela glaset i ett svep = hole-in-one.' },
-  { title: 'Hålets regel', text: 'Bryter du mot hålets regel blir det straffslag. Gänget dömer – ingen nåd.' },
-  { title: 'Vinst', text: 'Lägst totalscore bland dem som spelat klart alla hål vinner rundan.' },
+  { title: 'Hålets regel', text: 'Brott mot hålets regel = 2 slag plikt per brott. På svordomshålet: 1 slag per svordom.' },
+  { title: 'Spya', text: '2 slag plikt.' },
+  { title: 'Snubbla eller trilla', text: '2 slag plikt.' },
+  { title: 'Övrig plikt', text: 'Annat fuffens som gänget dömer: 1 slag plikt.' },
+  { title: 'Split the G', text: 'Splittar du G:et på första klunken drar du bort 2 slag från din totalscore.' },
+  { title: 'Plikt i appen', text: 'Lägg in plikt och Split the G med knapparna på hålet. Allt summeras på totalen och i tabellen.' },
+  { title: 'Vinst', text: 'Lägst totalscore (med plikt och bonus) bland dem som spelat klart alla hål vinner rundan.' },
 ];
