@@ -287,10 +287,15 @@ export default function App() {
   // "Lägg till mig"-länk (?add=FS1234). Sparas i sessionStorage så den överlever inloggningen.
   const [pendingAdd, setPendingAddState] = useState<string>(() => {
     try {
-      const fromUrl = normalizePlayerCode(new URLSearchParams(window.location.search).get('add') || '');
+      // Profillänk: /spelare/<spelar-ID> (äldre länkar: ?add=<spelar-ID>)
+      const pathMatch = window.location.pathname.match(/^\/spelare\/([^/?#]+)/);
+      const fromUrl = normalizePlayerCode(
+        pathMatch ? decodeURIComponent(pathMatch[1]) : new URLSearchParams(window.location.search).get('add') || ''
+      );
       if (fromUrl) {
         sessionStorage.setItem(PENDING_ADD_KEY, fromUrl);
-        window.history.replaceState(null, '', `${window.location.pathname}${window.location.hash}`);
+        window.history.replaceState(null, '', `/${window.location.hash}`);
+        document.title = 'Pubgolf Links — Pubgolf Tour & Banguide';
         return fromUrl;
       }
       return sessionStorage.getItem(PENDING_ADD_KEY) || '';
@@ -2110,7 +2115,7 @@ export default function App() {
               onEditCourse={(id) => navigate('editCourse', id)}
               onStartCourse={openStart}
               onCreateCourse={() => setView('create')}
-              shareUrl={myPlayerCode ? `${window.location.origin}/?add=${encodeURIComponent(myPlayerCode)}` : ''}
+              shareUrl={myPlayerCode ? `${window.location.origin}/spelare/${encodeURIComponent(myPlayerCode)}` : ''}
             />
           )}
 

@@ -86,7 +86,7 @@ export const MyProfileView: React.FC<MyProfileViewProps> = ({
 
   const shareProfile = async () => {
     if (!shareUrl) return;
-    const text = `Lägg till mig på Pubgolf Links – ${profile.displayName} "${profile.nickname}". Mitt spelar-ID: ${playerCode}`;
+    const text = `Lägg till mig på Pubgolf Links! ${profile.displayName} "${profile.nickname}" – tryck på länken så blir vi vänner i appen.`;
     try {
       if (navigator.share) {
         await navigator.share({ title: 'Lägg till mig på Pubgolf Links', text, url: shareUrl });
@@ -168,7 +168,7 @@ export const MyProfileView: React.FC<MyProfileViewProps> = ({
         <div className="min-w-0 flex-1">
           <div className="text-sm font-semibold text-[#112218]">Lägg till mig på Pubgolf Links</div>
           <div className="truncate text-xs text-[#112218]/60">
-            {shareNote || 'Skicka länken till kompisarna – ett tryck så är ni vänner.'}
+            {shareNote || (shareUrl ? shareUrl.replace(/^https?:\/\//, '') : 'Skicka länken till kompisarna – ett tryck så är ni vänner.')}
           </div>
         </div>
         <button type="button" onClick={() => void shareProfile()} disabled={!shareUrl}
