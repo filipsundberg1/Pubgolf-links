@@ -16,6 +16,7 @@ import {
   type DrinkCategory,
   type FairwayShape,
   type RoundHoleOverride,
+  type RoundMessage,
   type PlayerTourProfile,
   type PubCourse,
   type PubHole,
@@ -153,7 +154,7 @@ export function parseRound(d: DocumentData): PubRound {
     gameMode: d.gameMode === 'brutal' ? 'brutal' : 'single',
     memberIds: Array.isArray(d.memberIds) ? d.memberIds.map(String) : [],
     locked: d.locked === true,
-    status: d.status === 'deleted' ? 'deleted' : d.status === 'finished' ? 'finished' : 'active',
+    status: (['lobby', 'active', 'finished', 'deleted'] as const).includes(d.status) ? d.status : 'active',
     customHoles: Array.isArray(d.customHoles) && d.customHoles.length > 0 ? d.customHoles.map(parseOverride) : undefined,
     invitedIds: Array.isArray(d.invitedIds) ? d.invitedIds.map(String) : [],
   };
@@ -219,6 +220,20 @@ const readSips = (d: DocumentData): number[] => {
   for (let n = DEFAULT_HOLE_COUNT + 1; n <= MAX_HOLES; n++) if (`sipsHole${n}` in d) last = n;
   return Array.from({ length: last }, (_, i) => Number(d[`sipsHole${i + 1}`] || 0));
 };
+
+/** Ett meddelande i rundans snack (lobbyn). */
+export function parseRoundMessage(id: string, d: DocumentData): RoundMessage {
+  const ts = d.createdAt as { toMillis?: () => number } | null | undefined;
+  return {
+    id,
+    uid: String(d.uid || ''),
+    type: d.type === 'tomato' ? 'tomato' : 'chat',
+    text: String(d.text || '').slice(0, 280),
+    targetUid: typeof d.targetUid === 'string' ? d.targetUid : undefined,
+    // Lokalt skickade meddelanden saknar serverns tid en kort stund
+    createdMs: ts && typeof ts.toMillis === 'function' ? ts.toMillis() : Date.now(),
+  };
+}
 
 /** Plikt/bonus-listan på en deltagare. Okända typer och hål hoppas över. */
 export function parsePenalties(v: unknown): PenaltyEvent[] {

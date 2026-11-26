@@ -79,7 +79,30 @@ export interface RoundHoleOverride {
  * En runda = ett faktiskt spelat tillfälle på en bana (mall).
  * Dokument-id är rundans kod (t.ex. PG-7KQ2MX) – bara den som har koden hittar rundan.
  */
-export type RoundStatus = 'active' | 'finished' | 'deleted';
+/** lobby = väntar på att ägaren startar (ingen score), active = spelas, finished = avslutad. */
+export type RoundStatus = 'lobby' | 'active' | 'finished' | 'deleted';
+
+/** Meddelande i rundans lobby/snack: text eller en kastad tomat. */
+export interface RoundMessage {
+  id: string;
+  uid: string;
+  type: 'chat' | 'tomato';
+  text: string;
+  targetUid?: string;
+  createdMs: number;
+}
+
+/** Retsamma färdiga repliker för lobbyn. */
+export const TRASH_TALK: string[] = [
+  'Du kommer spy på hål 3.',
+  'Hoppas du gillar dubbelbogey.',
+  'Ditt handicap är ett skämt.',
+  'Jag har sett bättre svep på ett dagis.',
+  'Ta med en hink, kompis.',
+  'Split the G? Du splittar inte ens en Fanta.',
+  'Sista plats bjuder på nästa runda.',
+  'Dina klunkar är som dina puttar – för många.',
+];
 
 export interface PubRound {
   roundId: string;

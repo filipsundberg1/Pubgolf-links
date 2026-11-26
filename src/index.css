@@ -30,3 +30,19 @@
     font-variant-numeric: tabular-nums;
   }
 }
+
+/* Lobbyn: tomatkastning */
+@keyframes pg-splat-pop {
+  0% { transform: scale(0.2) rotate(-25deg); opacity: 0; }
+  18% { transform: scale(1.15) rotate(6deg); opacity: 1; }
+  30% { transform: scale(1) rotate(0deg); opacity: 1; }
+  80% { opacity: 1; }
+  100% { transform: scale(1.05); opacity: 0; }
+}
+@keyframes pg-tomato-wobble {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(-8deg); }
+  75% { transform: rotate(8deg); }
+}
+.pg-splat { animation: pg-splat-pop 1.6s ease-out forwards; }
+.pg-tomato-wobble:hover { animation: pg-tomato-wobble 0.4s ease-in-out; }

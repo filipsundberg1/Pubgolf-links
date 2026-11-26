@@ -221,7 +221,7 @@ service cloud.firestore {
       data.gameMode in ['single', 'brutal'] &&
       data.memberIds is list && data.memberIds.size() <= 40 &&
       data.locked is bool &&
-      data.status in ['active', 'finished', 'deleted'] &&
+      data.status in ['lobby', 'active', 'finished', 'deleted'] &&
       (!('customHoles' in data) || (data.customHoles is list && data.customHoles.size() >= 1 && data.customHoles.size() <= 18)) &&
       (!('invitedIds' in data) || (data.invitedIds is list && data.invitedIds.size() <= 40)) &&
       data.updatedAt == request.time;
@@ -296,7 +296,7 @@ service cloud.firestore {
         isValidRound(incoming(), roundId) &&
         incoming().ownerId == request.auth.uid &&
         request.auth.uid in incoming().memberIds &&
-        incoming().status == 'active';
+        incoming().status in ['lobby', 'active'];
 
       allow update: if isVerifiedUser() &&
         isValidRound(incoming(), roundId) &&
@@ -326,10 +326,10 @@ service cloud.firestore {
             incoming().get('invitedIds', []) == existing().get('invitedIds', []).removeAll([request.auth.uid]) &&
             incoming().diff(existing()).affectedKeys().hasOnly(['invitedIds', 'updatedAt'])
           ) ||
-          // Join with the code: only while active and unlocked, only adding yourself
+          // Join with the code: only while in the lobby or active and unlocked, only adding yourself
           (
             !isBanned() &&
-            existing().status == 'active' &&
+            existing().status in ['lobby', 'active'] &&
             existing().locked == false &&
             !(request.auth.uid in existing().memberIds) &&
             incoming().memberIds == existing().memberIds.concat([request.auth.uid]) &&
@@ -344,6 +344,36 @@ service cloud.firestore {
         );
 
       allow delete: if (isVerifiedUser() && existing().ownerId == request.auth.uid) || isAdmin();
+
+      // Subcollection: /rounds/{roundId}/messages/{messageId} – lobbysnack och tomater
+      match /messages/{messageId} {
+        function chatRound() {
+          return get(/databases/$(database)/documents/rounds/$(roundId)).data;
+        }
+
+        allow get, list: if isSignedIn() && (isAdmin() || request.auth.uid in chatRound().memberIds);
+
+        allow create: if isVerifiedUser() &&
+          !isBanned() &&
+          request.auth.uid in chatRound().memberIds &&
+          chatRound().status != 'deleted' &&
+          incoming().keys().hasOnly(['uid', 'type', 'text', 'targetUid', 'createdAt']) &&
+          incoming().keys().hasAll(['uid', 'type', 'text', 'createdAt']) &&
+          incoming().uid == request.auth.uid &&
+          incoming().type in ['chat', 'tomato'] &&
+          incoming().text is string &&
+          incoming().text.size() <= 280 &&
+          (incoming().type != 'chat' || incoming().text.size() >= 1) &&
+          (incoming().type != 'tomato' || (incoming().get('targetUid', '') in chatRound().memberIds && incoming().targetUid != request.auth.uid)) &&
+          (!('targetUid' in incoming()) || isValidId(incoming().targetUid)) &&
+          incoming().createdAt == request.time;
+
+        allow update: if false;
+
+        // Egna meddelanden, eller ägaren/admin, kan tas bort
+        allow delete: if isSignedIn() &&
+          (existing().uid == request.auth.uid || chatRound().ownerId == request.auth.uid || isAdmin());
+      }
 
       // Subcollection: /rounds/{roundId}/participants/{playerId}
       match /participants/{playerId} {

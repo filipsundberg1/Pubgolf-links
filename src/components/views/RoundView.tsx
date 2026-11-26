@@ -1,5 +1,6 @@
 import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  MessageCircle,
   BookOpen,
   ChevronDown,
   ChevronLeft,
@@ -27,6 +28,7 @@ import {
   penaltyAppliesOn,
   isSplitTheGHole,
   type PenaltyType,
+  type RoundMessage,
   buildLeaderboard,
   calculateRoundSummary,
   evaluateGolfHoleScore,
@@ -43,6 +45,9 @@ import { GolferAvatar } from '../GolferAvatar';
 import { Sheet } from '../shell/Sheet';
 import { RulesList } from '../RulesList';
 import { HoleListEditor, holeToDraft, type HoleDraft } from '../HoleListEditor';
+import { ChatPanel } from '../lobby/ChatPanel';
+import { Splat, TomatoIcon } from '../lobby/Tomato';
+import { useTomatoHits } from '../lobby/useTomatoHits';
 
 // Tunga delar laddas först när de öppnas
 const LeaderboardView = lazy(() => import('../LeaderboardView').then((m) => ({ default: m.LeaderboardView })));
@@ -79,6 +84,11 @@ interface RoundViewProps {
   onFinish: () => Promise<void>;
   onReopen: () => Promise<void>;
   onLeave: () => Promise<void>;
+  messages: RoundMessage[];
+  nameFor: (uid: string) => string;
+  avatarFor: (uid: string) => string;
+  onSend: (text: string) => Promise<void>;
+  onTomato: (targetUid: string) => Promise<void>;
 }
 
 export const RoundView: React.FC<RoundViewProps> = ({
@@ -105,8 +115,23 @@ export const RoundView: React.FC<RoundViewProps> = ({
   onFinish,
   onReopen,
   onLeave,
+  messages,
+  nameFor,
+  avatarFor,
+  onSend,
+  onTomato,
 }) => {
-  const [sheet, setSheet] = useState<'leaderboard' | 'map' | 'rules' | 'customize' | 'manage' | 'finish' | 'leave' | null>(null);
+  const [sheet, setSheet] = useState<'leaderboard' | 'map' | 'rules' | 'customize' | 'manage' | 'finish' | 'leave' | 'chat' | null>(null);
+  const { hits, hitBy, tomatoCount } = useTomatoHits(messages, me.uid);
+  const lastThrow = useRef(0);
+  const throwAt = (uid: string) => {
+    if (uid === me.uid || Date.now() - lastThrow.current < 1500) return;
+    lastThrow.current = Date.now();
+    void onTomato(uid).catch(() => undefined);
+  };
+  // Olästa meddelanden sedan snacket öppnades senast
+  const [seenCount, setSeenCount] = useState(messages.length);
+  const unread = sheet === 'chat' ? 0 : Math.max(0, messages.filter((m) => m.type === 'chat').length - seenCount);
   const [shareNote, setShareNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [drafts, setDrafts] = useState<HoleDraft[]>([]);
@@ -198,6 +223,15 @@ export const RoundView: React.FC<RoundViewProps> = ({
 
   return (
     <div className="space-y-4 pb-10 transition-transform" style={dragY ? { transform: `translateY(${dragY}px)`, transition: 'none' } : undefined}>
+      {hitBy && (
+        <div key={hitBy.at} className="pointer-events-none fixed inset-0 z-50 flex flex-col items-center justify-center">
+          <Splat size={240} />
+          <div className="pg-splat absolute mt-60 rounded-full bg-[#112218] px-4 py-2 text-sm font-bold text-[#F6F4EE] shadow-xl">
+            {nameFor(hitBy.uid)} prickade dig!
+          </div>
+        </div>
+      )}
+
       {/* Handtag: dra ner (eller tryck) för att fälla ihop rundan och använda resten av appen */}
       <div
         onTouchStart={onTouchStart}
@@ -501,6 +535,13 @@ export const RoundView: React.FC<RoundViewProps> = ({
             className="flex items-center justify-center gap-1.5 rounded-2xl border border-[#112218]/15 py-3 text-xs font-bold text-[#112218]">
             <Settings2 className="h-4 w-4 text-[#166534]" /> Spelare & inställningar
           </button>
+          <button type="button" onClick={() => { setSeenCount(messages.filter((m) => m.type === 'chat').length); setSheet('chat'); }}
+            className="relative col-span-2 flex items-center justify-center gap-1.5 rounded-2xl border border-[#112218]/15 py-3 text-xs font-bold text-[#112218] sm:col-span-4">
+            <MessageCircle className="h-4 w-4 text-[#166534]" /> Snacket & tomater
+            {unread > 0 && (
+              <span className="ml-1 rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{unread}</span>
+            )}
+          </button>
           {isOwner && !readOnly && (
             <button type="button" onClick={openCustomize}
               className="col-span-2 flex items-center justify-center gap-1.5 rounded-2xl border border-[#112218]/15 py-3 text-xs font-bold text-[#112218] sm:col-span-4">
@@ -577,6 +618,34 @@ export const RoundView: React.FC<RoundViewProps> = ({
           <button type="button" onClick={() => { setSheet(null); onMinimize(); }} className="w-full rounded-2xl border border-[#112218]/15 py-3 text-sm font-semibold">
             Fäll ner i stället
           </button>
+        </div>
+      </Sheet>
+
+      <Sheet open={sheet === 'chat'} title="Snacket" onClose={() => { setSeenCount(messages.filter((m) => m.type === 'chat').length); setSheet(null); }}>
+        <div className="space-y-3">
+          <div>
+            <div className="mb-1.5 flex items-center gap-1 text-[11px] font-semibold text-[#112218]/55">
+              <TomatoIcon size={13} /> Kasta en tomat
+            </div>
+            <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+              {players.filter((p) => p.uid !== me.uid).map((p) => (
+                <button key={p.uid} type="button" onClick={() => throwAt(p.uid)} aria-label={`Kasta tomat på ${p.displayName}`}
+                  className="pg-tomato-wobble relative flex w-16 shrink-0 flex-col items-center gap-1 rounded-2xl bg-[#F6F4EE] px-1 py-2">
+                  <GolferAvatar avatarSeed={p.avatarSeed} displayName={p.displayName} size="sm" />
+                  <span className="w-full truncate text-center text-[11px] font-semibold text-[#112218]">{p.displayName.split(' ')[0]}</span>
+                  {tomatoCount(p.uid) > 0 && (
+                    <span className="absolute right-0.5 top-0.5 rounded-full bg-white px-1 text-[9px] font-bold text-red-700 shadow-xs">{tomatoCount(p.uid)}</span>
+                  )}
+                  {hits[p.uid] && (
+                    <span key={hits[p.uid]} className="absolute inset-0 flex items-center justify-center"><Splat size={60} /></span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+          {sheet === 'chat' && (
+            <ChatPanel messages={messages} meUid={me.uid} nameFor={nameFor} avatarFor={avatarFor} onSend={onSend} maxHeightClass="max-h-[45vh]" />
+          )}
         </div>
       </Sheet>
 

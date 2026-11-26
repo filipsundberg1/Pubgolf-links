@@ -181,3 +181,14 @@ test('inbjudna spelare sparas på rundan', () => {
   assert.deepEqual(roundPayload(r).invitedIds, ['u2']);
   assert.equal('invitedIds' in roundPayload({ ...r, invitedIds: [] }), false);
 });
+
+test('lobby-status och meddelanden läses rätt', async () => {
+  const { parseRoundMessage } = await import('../lib/tourData');
+  const base = { roundId: 'PG-AAAA', appId: 'december-links', courseId: 'c', courseTitle: 'B', city: 'S', eventDate: 'x', ownerId: 'u1', ownerName: 'F', gameMode: 'single', memberIds: ['u1'], locked: false };
+  assert.equal(parseRound({ ...base, status: 'lobby' }).status, 'lobby');
+  assert.equal(parseRound({ ...base, status: 'konstig' }).status, 'active');
+  assert.equal(roundPayload(parseRound({ ...base, status: 'lobby' })).status, 'lobby');
+  const m = parseRoundMessage('m1', { uid: 'u2', type: 'tomato', text: '', targetUid: 'u1', createdAt: { toMillis: () => 1000 } });
+  assert.deepEqual(m, { id: 'm1', uid: 'u2', type: 'tomato', text: '', targetUid: 'u1', createdMs: 1000 });
+  assert.equal(parseRoundMessage('m2', { uid: 'u2', type: 'hack', text: 'hej' }).type, 'chat');
+});

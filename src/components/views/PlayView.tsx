@@ -150,6 +150,7 @@ export const PlayView: React.FC<PlayViewProps> = ({
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-semibold text-[#112218]">{titleForRound(r)}</div>
                   <div className="flex flex-wrap items-center gap-x-2 text-xs text-[#112218]/60">
+                    {r.status === 'lobby' && <span className="rounded-full bg-[#D4AF37]/20 px-1.5 font-bold text-[#856a32]">Lobby</span>}
                     <span>{formatEventDate(r.eventDate)}</span>
                     <span>· {GAME_MODE_LABELS[r.gameMode].title}</span>
                     <span>· {r.memberIds.length} spelare</span>

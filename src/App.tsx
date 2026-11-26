@@ -13,6 +13,7 @@ import {
   type User,
 } from 'firebase/auth';
 import {
+  addDoc,
   arrayRemove,
   arrayUnion,
   collection,
@@ -21,7 +22,9 @@ import {
   doc,
   getDoc,
   getDocs,
+  limit,
   onSnapshot,
+  orderBy,
   query,
   serverTimestamp,
   setDoc,
@@ -47,6 +50,7 @@ import {
   PENALTY_TYPES,
   type PenaltyEvent,
   type PenaltyType,
+  type RoundMessage,
   ROUND_CODE_PATTERN,
   buildLeaderboard,
   buildScoreCelebrationClip,
@@ -89,6 +93,7 @@ import {
   parseLegacyParticipant,
   parseProfile,
   parseRound,
+  parseRoundMessage,
   parseRoundParticipant,
   profilePayload,
   roundParticipantPayload,
@@ -111,6 +116,7 @@ import { AdminView } from './components/views/AdminView';
 import { ExploreView, type Relation } from './components/views/ExploreView';
 import { PlayerProfileView } from './components/views/PlayerProfileView';
 import { CoursePreviewView } from './components/views/CoursePreviewView';
+import { LobbyView } from './components/views/LobbyView';
 import { MiniRoundBar } from './components/MiniRoundBar';
 import { draftToOverride, holeToDraft, type HoleDraft } from './components/HoleListEditor';
 
@@ -322,6 +328,7 @@ export default function App() {
   const [bannedUids, setBannedUids] = useState<Set<string>>(new Set());
   const [adminRounds, setAdminRounds] = useState<PubRound[] | null>(null);
   const [invitedRounds, setInvitedRounds] = useState<PubRound[]>([]);
+  const [roundMessages, setRoundMessages] = useState<RoundMessage[]>([]);
   const [inviteBusy, setInviteBusy] = useState(false);
 
   useEffect(() => {
@@ -630,6 +637,34 @@ export default function App() {
         (r.customHoles || holesByCourse[r.courseId] || (coursesLoaded && !courseById.has(r.courseId)))
     );
 
+  // Snacket i rundan man har öppen (lobby eller pågående)
+  useEffect(() => {
+    setRoundMessages([]);
+    if (!firebaseUser || view !== 'round' || !activeRoundId) return;
+    const q = query(collection(db, 'rounds', activeRoundId, 'messages'), orderBy('createdAt', 'desc'), limit(150));
+    const unsub = onSnapshot(
+      q,
+      (snap) => setRoundMessages(snap.docs.map((d) => parseRoundMessage(d.id, d.data())).reverse()),
+      (err) => {
+        if (!isPermissionError(err)) reportFirestoreError(err, OperationType.LIST, `rounds/${activeRoundId}/messages`);
+      }
+    );
+    return () => unsub();
+  }, [firebaseUser, view, activeRoundId]);
+
+  // Säg till när ägaren startar rundan från lobbyn
+  const prevStatusRef = useRef<Record<string, string>>({});
+  useEffect(() => {
+    for (const r of rounds) {
+      const before = prevStatusRef.current[r.roundId];
+      if (before === 'lobby' && r.status === 'active') {
+        setNotice(`${r.courseTitle} har startat – kör!`);
+        setTimeout(() => setNotice(null), 3500);
+      }
+      prevStatusRef.current[r.roundId] = r.status;
+    }
+  }, [rounds]);
+
   // Efter omladdning direkt in i en runda: välj första ospelade hålet när datan finns
   const holeInitRef = useRef<string | null>(null);
   useEffect(() => {
@@ -924,7 +959,8 @@ export default function App() {
 
   const titleForRound = (r: PubRound) => courseById.get(r.courseId)?.title || r.courseTitle;
   const byDateDesc = (a: PubRound, b: PubRound) => b.eventDate.localeCompare(a.eventDate);
-  const myActiveRounds = rounds.filter((r) => r.status === 'active').sort(byDateDesc);
+  const isOpenRound = (r: PubRound) => r.status === 'active' || r.status === 'lobby';
+  const myActiveRounds = rounds.filter(isOpenRound).sort(byDateDesc);
   const myFinishedRounds = rounds.filter((r) => r.status === 'finished').sort(byDateDesc);
   const myCourses = courses.filter((c) => c.ownerId === uid).sort((a, b) => a.title.localeCompare(b.title, 'sv'));
   // Alla banor man kan spela: alla öppna banor (även egna) + mina privata
@@ -1114,7 +1150,8 @@ export default function App() {
       gameMode: input.gameMode,
       memberIds: [uid],
       locked: false,
-      status: 'active',
+      // Alla samlas i lobbyn först – ägaren startar när alla är inne
+      status: 'lobby',
     };
     const courseHoles = holesForCourse(courseId, course.ownerId);
     // Baklänges = rundans egna hål i omvänd ordning. Banan ändras inte.
@@ -1154,6 +1191,7 @@ export default function App() {
       return { ok: false, message: 'Kunde inte hämta rundan just nu. Försök igen.' };
     }
     if (round.status === 'deleted') return { ok: false, message: 'Rundan är raderad av ägaren.' };
+    if (round.status === 'finished') return { ok: false, message: 'Rundan är redan avslutad.' };
     if (round.locked) return { ok: false, message: 'Rundan är låst – be ägaren låsa upp den eller lägga till dig.' };
     const joinOwner = courseById.get(round.courseId)?.ownerId || round.ownerId;
     const holes = round.customHoles
@@ -1264,7 +1302,7 @@ export default function App() {
           : [...prev, { ...round, memberIds: [...round.memberIds, uid], invitedIds: (round.invitedIds || []).filter((x) => x !== uid) }]
       );
       showNotice(`Du är med i ${round.courseTitle}!`);
-      if (round.status === 'active') setLiveRoundId(round.roundId);
+      if (round.status === 'active' || round.status === 'lobby') setLiveRoundId(round.roundId);
       navigate('round', round.roundId);
     } catch (error) {
       console.error('Kunde inte tacka ja', error);
@@ -1388,7 +1426,7 @@ export default function App() {
 
   // ---- Score ----
   const handleUpdateHoleSips = (holeNumber: number, newSips: number) => {
-    if (!activeRound || !me || activeRound.status === 'deleted') return;
+    if (!activeRound || !me || activeRound.status === 'deleted' || activeRound.status === 'lobby') return;
     const rId = activeRound.roundId;
     const nextSips = Array.from({ length: Math.max(activeHoles.length, me.sips.length) }, (_, i) => me.sips[i] || 0);
     nextSips[holeNumber - 1] = newSips;
@@ -1424,9 +1462,39 @@ export default function App() {
     );
   };
 
+  // ---- Lobby: snack, tomater, start ----
+  const sendRoundMessage = async (text: string) => {
+    if (!activeRoundId) return;
+    await addDoc(collection(db, 'rounds', activeRoundId, 'messages'), {
+      uid,
+      type: 'chat',
+      text: text.slice(0, 280),
+      createdAt: serverTimestamp(),
+    });
+  };
+  const throwTomato = async (targetUid: string) => {
+    if (!activeRoundId || targetUid === uid) return;
+    await addDoc(collection(db, 'rounds', activeRoundId, 'messages'), {
+      uid,
+      type: 'tomato',
+      text: '',
+      targetUid,
+      createdAt: serverTimestamp(),
+    });
+  };
+  const handleStartGame = async (roundId: string) => {
+    await updateRound(roundId, { status: 'active' });
+    setRounds((prev) => prev.map((r) => (r.roundId === roundId ? { ...r, status: 'active' } : r)));
+    setSelectedHoleNum(1);
+  };
+  const nameForUid = (id: string) =>
+    profileByUid.get(id)?.displayName.split(' ')[0] || activeParticipants.find((p) => p.uid === id)?.displayName.split(' ')[0] || 'Någon';
+  const avatarForUid = (id: string) =>
+    profileByUid.get(id)?.avatarSeed || activeParticipants.find((p) => p.uid === id)?.avatarSeed || 'emerald';
+
   // ---- Plikt och bonus ----
   const writeMyPenalties = (next: PenaltyEvent[]) => {
-    if (!activeRound || !me || activeRound.status === 'deleted') return;
+    if (!activeRound || !me || activeRound.status === 'deleted' || activeRound.status === 'lobby') return;
     const rId = activeRound.roundId;
     const summary = calculateRoundSummary(me.sips, activeHoles, next);
     const totals = { totalSips: summary.totalSips, totalToPar: summary.totalToPar, thruHoles: summary.thruHoles };
@@ -1604,13 +1672,13 @@ export default function App() {
     setSelectedHoleNum(firstOpen >= 0 ? firstOpen + 1 : 1);
     holeInitRef.current = mine ? roundId : null;
     const r = rounds.find((x) => x.roundId === roundId);
-    if (!r || r.status === 'active') setLiveRoundId(roundId);
+    if (!r || r.status === 'active' || r.status === 'lobby') setLiveRoundId(roundId);
     navigate('round', roundId, replace);
   };
 
   /** Fäll ner rundan: tillbaka till förra vyn, rundan ligger kvar som en rad längst ner. */
   const minimizeRound = () => {
-    if (activeRoundId && activeRound?.status === 'active') setLiveRoundId(activeRoundId);
+    if (activeRoundId && (activeRound?.status === 'active' || activeRound?.status === 'lobby')) setLiveRoundId(activeRoundId);
     const back = lastOutsideRoundRef.current;
     navigate(back.view, back.id);
   };
@@ -1630,7 +1698,9 @@ export default function App() {
   const inspectedPlayer = selectedPlayerUid ? profileByUid.get(selectedPlayerUid) || null : null;
 
   // Nedfälld runda längst ner
-  const liveRound = liveRoundId ? rounds.find((r) => r.roundId === liveRoundId && r.status === 'active') || null : null;
+  const liveRound = liveRoundId
+    ? rounds.find((r) => r.roundId === liveRoundId && (r.status === 'active' || r.status === 'lobby')) || null
+    : null;
   const liveParts = liveRound ? (participantsByRound[liveRound.roundId] || []).map(withProfile) : [];
   const liveMe = liveParts.find((p) => p.uid === uid) || null;
   const showMiniBar = !!liveRound && !!liveMe && view !== 'round';
@@ -1649,7 +1719,12 @@ export default function App() {
           : `Leder: ${leader?.player.displayName.split(' ')[0]} ${leader?.summary.toParFormatted}`;
     return {
       title: titleForRound(liveRound),
-      holeLabel: nextHole >= 0 ? `Hål ${nextHole + 1}/${holes.length}` : 'Alla hål spelade',
+      holeLabel:
+        liveRound.status === 'lobby'
+          ? 'Lobby – väntar på start'
+          : nextHole >= 0
+            ? `Hål ${nextHole + 1}/${holes.length}`
+            : 'Alla hål spelade',
       toPar: mine?.summary.toParFormatted || 'E',
       position: mine?.positionLabel || '–',
       leaderLine,
@@ -1659,6 +1734,50 @@ export default function App() {
   const myPlayerCode = myProfile?.playerCode || '';
   const tourPlayers: PlayerTourProfile[] = mergeTourProfiles(allProfiles, [], myProfile, 'none', uid).map(withProfile);
   const myTourPlayer = tourPlayers.find((p) => p.uid === uid) || null;
+
+  // Spelare & inställningar för rundan (används i både lobbyn och rundan)
+  const manageSheetEl =
+    activeRound && me ? (
+      <RoundManageSheet
+        round={activeRound}
+        course={activeCourseDoc}
+        players={activeParticipants}
+        me={me}
+        myPlayerCode={myPlayerCode}
+        isRoundOwner={activeRound.ownerId === uid}
+        isCourseOwner={activeCourseDoc?.ownerId === uid}
+        onToggleLock={(locked) => updateRound(activeRound.roundId, { locked })}
+        onAddPlayer={(code) => handleAddPlayer(activeRound.roundId, code)}
+        invited={(activeRound.invitedIds || [])
+          .map((id) => profileByUid.get(id))
+          .filter((p): p is ReusablePlayerProfile => !!p)}
+        onCancelInvite={(playerUid) => handleCancelInvite(activeRound.roundId, playerUid)}
+        quickAdd={[...friends, ...followingOnly].filter(
+          (p) =>
+            !activeRound.memberIds.includes(p.uid) &&
+            !(activeRound.invitedIds || []).includes(p.uid) &&
+            !!p.playerCode
+        )}
+        morePlayers={allProfiles
+          .filter(
+            (p) =>
+              p.uid !== uid &&
+              !!p.playerCode &&
+              !activeRound.memberIds.includes(p.uid) &&
+              !(activeRound.invitedIds || []).includes(p.uid) &&
+              !followingIds.has(p.uid) &&
+              !bannedUids.has(p.uid)
+          )
+          .sort(byRecent)}
+        onRemovePlayer={(playerUid) => handleRemovePlayer(activeRound.roundId, playerUid)}
+        onToggleCoursePublic={async (isPublic) => {
+          if (activeCourseDoc) await handleSaveCourseMeta({ ...activeCourseDoc, isPublic });
+        }}
+        onSetCountsForHcp={(counts) => handleSetCountsForHcp(activeRound.roundId, counts)}
+        onLeave={() => leaveRound(activeRound.roundId)}
+        onDeleteForAll={(keepMine) => handleDeleteForAll(activeRound.roundId, keepMine)}
+      />
+    ) : null;
 
   return (
     <APIProvider apiKey={import.meta.env.VITE_GOOGLE_MAPS_API_KEY || ''} language="sv" region="SE">
@@ -1784,6 +1903,12 @@ export default function App() {
               onCreate={() => setView('create')}
               onPlay={() => setView('play')}
               onOpenRound={(id) => openRound(id)}
+              crew={[
+                ...(myProfile ? [{ ...myProfile, wins: careerStatsByUid[uid]?.wins || 0 }] : []),
+                ...[...friends, ...followingOnly]
+                  .sort((a, b) => (b.lastActiveMs || 0) - (a.lastActiveMs || 0))
+                  .map((p) => ({ ...p, wins: careerStatsByUid[p.uid]?.wins || p.wins || 0 })),
+              ].slice(0, 4)}
             />
           )}
 
@@ -1900,6 +2025,29 @@ export default function App() {
 
           {view === 'round' &&
             (activeRound && activeRoundCourse && me ? (
+              activeRound.status === 'lobby' ? (
+                <LobbyView
+                  course={activeRoundCourse}
+                  holes={activeHoles}
+                  players={activeParticipants}
+                  invited={(activeRound.invitedIds || [])
+                    .map((id) => profileByUid.get(id))
+                    .filter((p): p is ReusablePlayerProfile => !!p)}
+                  meUid={uid}
+                  isOwner={activeRound.ownerId === uid}
+                  ownerName={profileByUid.get(activeRound.ownerId)?.displayName || activeRound.ownerName}
+                  messages={roundMessages}
+                  nameFor={nameForUid}
+                  avatarFor={avatarForUid}
+                  manageSheet={manageSheetEl}
+                  onSend={sendRoundMessage}
+                  onTomato={throwTomato}
+                  onStart={() => handleStartGame(activeRound.roundId)}
+                  onLeave={() => leaveRound(activeRound.roundId)}
+                  onMinimize={minimizeRound}
+                  onOpenGuide={() => openCourse(activeRound.courseId)}
+                />
+              ) : (
               <RoundView
                 course={activeRoundCourse}
                 courseDoc={activeCourseDoc}
@@ -1928,48 +2076,14 @@ export default function App() {
                 onFinish={() => handleFinishRound(activeRound.roundId)}
                 onReopen={() => handleReopenRound(activeRound.roundId)}
                 onLeave={() => leaveRound(activeRound.roundId)}
-                manageSheet={
-                  <RoundManageSheet
-                    round={activeRound}
-                    course={activeCourseDoc}
-                    players={activeParticipants}
-                    me={me}
-                    myPlayerCode={myPlayerCode}
-                    isRoundOwner={activeRound.ownerId === uid}
-                    isCourseOwner={activeCourseDoc?.ownerId === uid}
-                    onToggleLock={(locked) => updateRound(activeRound.roundId, { locked })}
-                    onAddPlayer={(code) => handleAddPlayer(activeRound.roundId, code)}
-                    invited={(activeRound.invitedIds || [])
-                      .map((id) => profileByUid.get(id))
-                      .filter((p): p is ReusablePlayerProfile => !!p)}
-                    onCancelInvite={(playerUid) => handleCancelInvite(activeRound.roundId, playerUid)}
-                    quickAdd={[...friends, ...followingOnly].filter(
-                      (p) =>
-                        !activeRound.memberIds.includes(p.uid) &&
-                        !(activeRound.invitedIds || []).includes(p.uid) &&
-                        !!p.playerCode
-                    )}
-                    morePlayers={allProfiles
-                      .filter(
-                        (p) =>
-                          p.uid !== uid &&
-                          !!p.playerCode &&
-                          !activeRound.memberIds.includes(p.uid) &&
-                          !(activeRound.invitedIds || []).includes(p.uid) &&
-                          !followingIds.has(p.uid) &&
-                          !bannedUids.has(p.uid)
-                      )
-                      .sort(byRecent)}
-                    onRemovePlayer={(playerUid) => handleRemovePlayer(activeRound.roundId, playerUid)}
-                    onToggleCoursePublic={async (isPublic) => {
-                      if (activeCourseDoc) await handleSaveCourseMeta({ ...activeCourseDoc, isPublic });
-                    }}
-                    onSetCountsForHcp={(counts) => handleSetCountsForHcp(activeRound.roundId, counts)}
-                    onLeave={() => leaveRound(activeRound.roundId)}
-                    onDeleteForAll={(keepMine) => handleDeleteForAll(activeRound.roundId, keepMine)}
-                  />
-                }
+                manageSheet={manageSheetEl}
+                messages={roundMessages}
+                nameFor={nameForUid}
+                avatarFor={avatarForUid}
+                onSend={sendRoundMessage}
+                onTomato={throwTomato}
               />
+              )
             ) : (
               <div className="rounded-3xl border border-[#112218]/10 bg-white p-8 text-center shadow-xs">
                 {!roundsLoaded || (activeRound && !participantsByRound[activeRound.roundId]) ? (
