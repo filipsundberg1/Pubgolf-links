@@ -1903,12 +1903,6 @@ export default function App() {
               onCreate={() => setView('create')}
               onPlay={() => setView('play')}
               onOpenRound={(id) => openRound(id)}
-              crew={[
-                ...(myProfile ? [{ ...myProfile, wins: careerStatsByUid[uid]?.wins || 0 }] : []),
-                ...[...friends, ...followingOnly]
-                  .sort((a, b) => (b.lastActiveMs || 0) - (a.lastActiveMs || 0))
-                  .map((p) => ({ ...p, wins: careerStatsByUid[p.uid]?.wins || p.wins || 0 })),
-              ].slice(0, 4)}
             />
           )}
 

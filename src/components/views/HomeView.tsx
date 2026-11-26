@@ -2,8 +2,7 @@ import React from 'react';
 import { ChevronRight, Flag, PlusCircle } from 'lucide-react';
 import type { PubRound } from '../../utils/golfRules';
 import { formatEventDate } from '../../utils/golfRules';
-import { HomeHeroScene } from '../HomeHeroScene';
-import { GolferAvatar } from '../GolferAvatar';
+import { HERO_CLUBHOUSE_IMG } from '../../data/defaultTourData';
 
 interface HomeViewProps {
   firstName: string;
@@ -12,31 +11,20 @@ interface HomeViewProps {
   onCreate: () => void;
   onPlay: () => void;
   onOpenRound: (roundId: string) => void;
-  /** Gänget på greenen: jag + några vänner. */
-  crew?: { uid: string; avatarSeed: string; displayName: string; wins?: number }[];
 }
 
 /** Startsida efter inloggning: två stora val + snabbväg till pågående rundor. */
-export const HomeView: React.FC<HomeViewProps> = ({ firstName, myOpenRounds, titleForRound, onCreate, onPlay, onOpenRound, crew = [] }) => (
+export const HomeView: React.FC<HomeViewProps> = ({ firstName, myOpenRounds, titleForRound, onCreate, onPlay, onOpenRound }) => (
   <div className="space-y-6">
-    {/* Kvällsscen över banan med gänget på greenen */}
-    <section className="relative min-h-[250px] overflow-hidden rounded-3xl border border-[#D4AF37]/40 bg-[#112218] shadow-xl sm:min-h-[280px]">
-      <HomeHeroScene />
-      <div className="absolute inset-0 bg-gradient-to-r from-[#0b1a12]/85 via-[#0b1a12]/35 to-transparent" />
+    {/* Klubbhuset: bild med mörkgrön ton, guldkant */}
+    <section className="relative overflow-hidden rounded-3xl border border-[#D4AF37]/40 bg-[#112218] shadow-xl">
+      <img src={HERO_CLUBHOUSE_IMG} alt="" className="absolute inset-0 h-full w-full object-cover object-[30%_50%]" />
+      <div className="absolute inset-0 bg-gradient-to-r from-[#112218] via-[#112218]/80 to-[#112218]/25" />
       <div className="absolute inset-x-0 bottom-0 h-1 bg-gradient-to-r from-[#D4AF37] via-[#D4AF37]/60 to-transparent" />
-      {crew.length > 0 && (
-        <div className="absolute bottom-4 right-3 flex items-end sm:bottom-5 sm:right-6" aria-label="Gänget">
-          {crew.slice(0, 4).map((p, i) => (
-            <div key={p.uid} className={`${i > 0 ? '-ml-3 sm:-ml-4' : ''} ${i % 2 === 1 ? 'mb-2' : ''} drop-shadow-[0_6px_8px_rgba(0,0,0,0.45)]`}>
-              <GolferAvatar avatarSeed={p.avatarSeed} displayName={p.displayName} wins={p.wins} size="md" pose="celebrate" className="sm:h-20 sm:w-20" />
-            </div>
-          ))}
-        </div>
-      )}
       <div className="relative px-6 py-8 sm:px-8 sm:py-10">
         <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[#D4AF37]">Klubbhuset</p>
         <h1 className="mt-2 max-w-sm font-display text-3xl font-bold leading-tight text-[#F6F4EE] sm:text-4xl">Välkommen, {firstName}!</h1>
-        <p className="mt-2 max-w-[15rem] text-sm text-[#F6F4EE]/80">Glasen är fyllda och flaggan är uppe. Vem psykar vem idag?</p>
+        <p className="mt-2 max-w-xs text-sm text-[#F6F4EE]/75">Glasen är fyllda och flaggorna uppe. Vad blir det idag?</p>
       </div>
     </section>
 
