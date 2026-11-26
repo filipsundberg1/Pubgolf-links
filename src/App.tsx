@@ -117,6 +117,7 @@ import { ExploreView, type Relation } from './components/views/ExploreView';
 import { PlayerProfileView } from './components/views/PlayerProfileView';
 import { CoursePreviewView } from './components/views/CoursePreviewView';
 import { LobbyView } from './components/views/LobbyView';
+import { TeamSetup } from './components/lobby/TeamSetup';
 import { MiniRoundBar } from './components/MiniRoundBar';
 import { draftToOverride, holeToDraft, type HoleDraft } from './components/HoleListEditor';
 
@@ -1487,6 +1488,10 @@ export default function App() {
       createdAt: serverTimestamp(),
     });
   };
+  const handleSetGameMode = async (roundId: string, mode: PubGolfGameMode) => {
+    await updateRound(roundId, { gameMode: mode });
+    setRounds((prev) => prev.map((r) => (r.roundId === roundId ? { ...r, gameMode: mode } : r)));
+  };
   const handleStartGame = async (roundId: string) => {
     await updateRound(roundId, { status: 'active' });
     setRounds((prev) => prev.map((r) => (r.roundId === roundId ? { ...r, status: 'active' } : r)));
@@ -1743,6 +1748,7 @@ export default function App() {
   // Spelare & inställningar för rundan (används i både lobbyn och rundan)
   const manageSheetEl =
     activeRound && me ? (
+      <>
       <RoundManageSheet
         round={activeRound}
         course={activeCourseDoc}
@@ -1782,6 +1788,20 @@ export default function App() {
         onLeave={() => leaveRound(activeRound.roundId)}
         onDeleteForAll={(keepMine) => handleDeleteForAll(activeRound.roundId, keepMine)}
       />
+        {activeRound.status !== 'lobby' && activeRound.gameMode === 'brutal' && (
+          <section className="mt-4 rounded-2xl border border-[#112218]/10 bg-white p-4">
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-[0.15em] text-[#112218]/55">Lag</h3>
+            <TeamSetup
+              players={activeParticipants}
+              gameMode={activeRound.gameMode}
+              isOwner={activeRound.ownerId === uid}
+              meUid={uid}
+              onSetGameMode={(mode) => handleSetGameMode(activeRound.roundId, mode)}
+              onAssignTeam={handleAssignTeam}
+            />
+          </section>
+        )}
+      </>
     ) : null;
 
   return (
@@ -2045,6 +2065,9 @@ export default function App() {
                   onLeave={() => leaveRound(activeRound.roundId)}
                   onMinimize={minimizeRound}
                   onOpenGuide={() => openCourse(activeRound.courseId)}
+                  gameMode={activeRound.gameMode}
+                  onSetGameMode={(mode) => handleSetGameMode(activeRound.roundId, mode)}
+                  onAssignTeam={handleAssignTeam}
                 />
               ) : (
               <RoundView
@@ -2063,14 +2086,7 @@ export default function App() {
                 onUpdateHoleSips={handleUpdateHoleSips}
                 onAddPenalty={handleAddPenalty}
                 onRemovePenalty={handleRemovePenalty}
-                onSaveCourseMeta={async (c) => {
-                  // Spelform hör till rundan. Banan ändras aldrig från en runda.
-                  if (activeRound.ownerId === uid && c.gameMode && c.gameMode !== activeRound.gameMode) {
-                    await updateRound(activeRound.roundId, { gameMode: c.gameMode as PubGolfGameMode });
-                  }
-                }}
                 onSaveRoundHoles={(drafts) => handleSaveRoundHoles(activeRound.roundId, drafts)}
-                onAssignTeam={handleAssignTeam}
                 onInspectPlayer={openPlayer}
                 onFinish={() => handleFinishRound(activeRound.roundId)}
                 onReopen={() => handleReopenRound(activeRound.roundId)}

@@ -4,6 +4,7 @@ import {
   formatEventDate,
   type PlayerTourProfile,
   type PubCourse,
+  type PubGolfGameMode,
   type PubHole,
   type ReusablePlayerProfile,
   type RoundMessage,
@@ -14,6 +15,7 @@ import { RulesList } from '../RulesList';
 import { ChatPanel } from '../lobby/ChatPanel';
 import { Splat, TomatoIcon } from '../lobby/Tomato';
 import { useTomatoHits } from '../lobby/useTomatoHits';
+import { TeamSetup } from '../lobby/TeamSetup';
 
 interface LobbyViewProps {
   /** Rundan i PubCourse-form (courseId = rundans kod). */
@@ -34,6 +36,9 @@ interface LobbyViewProps {
   onLeave: () => Promise<void>;
   onMinimize: () => void;
   onOpenGuide: () => void;
+  gameMode: PubGolfGameMode;
+  onSetGameMode: (mode: PubGolfGameMode) => Promise<void>;
+  onAssignTeam: (uids: string[], teamId: string, teamName: string) => Promise<void>;
 }
 
 /** Lobbyn före start: alla samlas, snackar skit och kastar tomater. Ingen score förrän ägaren startar. */
@@ -55,6 +60,9 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
   onLeave,
   onMinimize,
   onOpenGuide,
+  gameMode,
+  onSetGameMode,
+  onAssignTeam,
 }) => {
   const [sheet, setSheet] = useState<'rules' | 'manage' | 'leave' | 'start' | null>(null);
   const [busy, setBusy] = useState(false);
@@ -202,6 +210,13 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
         </ul>
       </section>
 
+      {/* Spelform och lag – bestäms innan start */}
+      <section className="rounded-3xl border border-[#112218]/10 bg-white p-4 shadow-xs">
+        <h2 className="mb-3 text-xs font-semibold uppercase tracking-[0.15em] text-[#112218]/55">Spelform & lag</h2>
+        <TeamSetup players={players} gameMode={gameMode} isOwner={isOwner} meUid={meUid}
+          onSetGameMode={onSetGameMode} onAssignTeam={onAssignTeam} />
+      </section>
+
       {/* Snacket */}
       <section className="rounded-3xl border border-[#112218]/10 bg-white p-4 shadow-xs">
         <h2 className="mb-3 text-xs font-semibold uppercase tracking-[0.15em] text-[#112218]/55">Snacket</h2>
@@ -230,7 +245,8 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
       <Sheet open={sheet === 'start'} title="Starta rundan?" onClose={() => setSheet(null)}>
         <div className="space-y-3">
           <p className="text-sm text-[#112218]/75">
-            {players.length} spelare är med.
+            {players.length} spelare är med{gameMode === 'brutal' ? ' och ni kör lagspel' : ''}.
+            {gameMode === 'brutal' && players.some((p) => !p.teamId) && ' Den som saknar lag paras ihop automatiskt.'}
             {invited.length > 0 && ` ${invited.length} inbjudna har inte svarat – de kan gå med efter start också.`}
             {' '}När rundan startar kan alla börja registrera score.
           </p>

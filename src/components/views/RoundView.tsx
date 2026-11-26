@@ -36,7 +36,6 @@ import {
   isPlaceholderText as isPlaceholder,
   type PlayerTourProfile,
   type PubCourse,
-  type PubGolfGameMode,
   type PubHole,
   type RoundStatus,
 } from '../../utils/golfRules';
@@ -76,10 +75,8 @@ interface RoundViewProps {
   onUpdateHoleSips: (holeNumber: number, sips: number) => void;
   onAddPenalty: (holeNumber: number, type: PenaltyType) => void;
   onRemovePenalty: (holeNumber: number, type: PenaltyType) => void;
-  onSaveCourseMeta: (course: PubCourse) => Promise<void>;
   /** Spara hålen bara för den här rundan. null = tillbaka till banans original. */
   onSaveRoundHoles: (holes: HoleDraft[] | null) => Promise<void>;
-  onAssignTeam: (uids: string[], teamId: string, teamName: string) => Promise<void>;
   onInspectPlayer: (uid: string) => void;
   onFinish: () => Promise<void>;
   onReopen: () => Promise<void>;
@@ -108,9 +105,7 @@ export const RoundView: React.FC<RoundViewProps> = ({
   onUpdateHoleSips,
   onAddPenalty,
   onRemovePenalty,
-  onSaveCourseMeta,
   onSaveRoundHoles,
-  onAssignTeam,
   onInspectPlayer,
   onFinish,
   onReopen,
@@ -706,9 +701,7 @@ export const RoundView: React.FC<RoundViewProps> = ({
           holes={holes}
           players={players}
           activePlayerUid={me.uid}
-          isCourseOwner={isOwner}
-          onUpdateCourseGameMode={(mode: PubGolfGameMode) => onSaveCourseMeta({ ...course, gameMode: mode })}
-          onAssignTeam={onAssignTeam}
+          isCourseOwner={false}
           onInspectPlayerProfile={(uid) => {
             setSheet(null);
             onInspectPlayer(uid);
